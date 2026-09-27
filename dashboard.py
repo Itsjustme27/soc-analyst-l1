@@ -20,6 +20,7 @@ API (JSON): /api/platforms, /api/providers,
             POST /api/providers/<id>/triage
 """
 from __future__ import annotations
+import hmac
 import json
 import os
 import signal
@@ -111,7 +112,7 @@ def _token_ok() -> bool:
     from config import cfg
     if not getattr(cfg, "DASHBOARD_TOKEN", ""):
         return False
-    return _supplied_token() == cfg.DASHBOARD_TOKEN
+    return hmac.compare_digest(_supplied_token(), cfg.DASHBOARD_TOKEN)
 
 
 def _token_user() -> tuple[str, str] | None:
@@ -130,7 +131,7 @@ def _token_user() -> tuple[str, str] | None:
             continue
         user, tok = parts[0], parts[1]
         role = parts[2] if len(parts) > 2 else DEFAULT_ROLE
-        if tok == supplied:
+        if hmac.compare_digest(tok, supplied):
             return user, (role if role in ROLES else DEFAULT_ROLE)
     return None
 

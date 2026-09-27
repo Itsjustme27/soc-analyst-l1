@@ -187,10 +187,12 @@ class TestDashboardAuth(unittest.TestCase):
     def setUp(self):
         from config import cfg
         self._orig_token = cfg.DASHBOARD_TOKEN
+        self._orig_users = getattr(cfg, "DASHBOARD_USERS", "")
 
     def tearDown(self):
         from config import cfg
         cfg.DASHBOARD_TOKEN = self._orig_token
+        cfg.DASHBOARD_USERS = self._orig_users
 
     def test_no_token_configured_means_open(self):
         from config import cfg
@@ -226,6 +228,45 @@ class TestDashboardAuth(unittest.TestCase):
         from config import cfg
         cfg.DASHBOARD_TOKEN = "s3cr3t"
         r = self.client.get("/api/providers?token=s3cr3t")
+        self.assertEqual(r.status_code, 200)
+
+    def test_token_comparisons_use_compare_digest(self):
+        # Both the shared-token check and the per-user lookup must compare in
+        # constant time (no early-exit length/char shortcuts -> timing oracle).
+        import hmac
+        from unittest import mock
+        from config import cfg
+        from dashboard import app, _token_ok, _token_user
+
+        cfg.DASHBOARD_TOKEN = "shared-secret"
+        cfg.DASHBOARD_USERS = "alice:alice-tok:approver"
+
+        with app.test_request_context("/api/providers",
+                                      headers={"Authorization": "Bearer shared-secret"}):
+            with mock.patch("dashboard.hmac.compare_digest", wraps=hmac.compare_digest) as cd:
+                self.assertTrue(_token_ok())
+                # a shared token is not a verified per-user identity
+                self.assertIsNone(_token_user())
+            self.assertTrue(cd.called)
+
+        with app.test_request_context("/api/providers",
+                                      headers={"Authorization": "Bearer alice-tok"}):
+            with mock.patch("dashboard.hmac.compare_digest", wraps=hmac.compare_digest) as cd2:
+                self.assertEqual(_token_user(), ("alice", "approver"))
+            self.assertTrue(cd2.called)
+
+    def test_wrong_per_user_token_is_401(self):
+        from config import cfg
+        cfg.DASHBOARD_TOKEN = ""
+        cfg.DASHBOARD_USERS = "alice:alice-tok:approver"
+        r = self.client.get("/api/providers", headers={"Authorization": "Bearer wrong-tok"})
+        self.assertEqual(r.status_code, 401)
+
+    def test_valid_per_user_token_authorizes(self):
+        from config import cfg
+        cfg.DASHBOARD_TOKEN = ""
+        cfg.DASHBOARD_USERS = "alice:alice-tok:approver,bob:bob-tok:viewer"
+        r = self.client.get("/api/providers", headers={"Authorization": "Bearer bob-tok"})
         self.assertEqual(r.status_code, 200)
 
 
