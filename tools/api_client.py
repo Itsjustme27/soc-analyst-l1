@@ -481,13 +481,28 @@ class WazuhManagerAPI:
         token: str | None = None,
     ) -> dict[str, Any]:
         """PUT /logtest. Wazuh 4.7+ calls the payload field `event`;
-        `log_format`/`location` are required. Tests the *deployed* ruleset -
-        for candidate rules the detection engine validates statically first,
-        then verifies with logtest after (approved) deployment."""
+        `log_format`/`location` are required. `log` MUST be one real log line.
+
+        logtest evaluates the *deployed* ruleset against an event - it is not a
+        rule validator. A candidate rule has to be loaded into the ruleset
+        first (see tools/wazuh/logtest.py::TestWazuhRule); rule XML in `event`
+        can only ever come back 'No decoder matched.', so it is refused here at
+        the transport boundary rather than sent and misread as a verdict.
+        """
+        # nosec B314 - no XML parsing here; the guard below only *rejects* XML.
+        from tools.wazuh.xmlio import NotALogEventError, ensure_real_event
+
+        try:
+            event = ensure_real_event(log, field="log")
+        except NotALogEventError as e:
+            raise WazuhAPIError(str(e)) from e
         body: dict[str, Any] = {
-            "event": log,
+            "event": event,
             "log_format": log_format or "syslog",
-            "location": location or "/var/log/soc-engine/test.log",
+            # `location` is "<component>-><path>" and selects the decoder, so it
+            # must be qualified; the default is the manager's own auth.log,
+            # which is what the canonical sshd preflight sample comes from.
+            "location": location or "master->/var/log/auth.log",
         }
         if token:
             body["token"] = token

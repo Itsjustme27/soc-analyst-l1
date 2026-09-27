@@ -26,6 +26,7 @@ from typing import Any
 
 from tools.base import BaseWazuhTool, Permission, ToolContext, ToolError
 from tools.dashboard import osd_objects as osd
+from tools.dashboard import preview, threatintel
 from tools.dashboard.client import dashboards_request
 from tools.indexer.queries import search_body, verify_opensearch_query
 
@@ -364,6 +365,21 @@ class DesignDetectionDashboard(BaseWazuhTool):
         if focus not in ("web", "ssh", "network", "general"):
             raise ToolError("focus must be one of: web | ssh | network | general")
 
+        # 0a) title has to be a name, not the request text. Rejected while
+        # proposing, derived while replaying an approval - see resolve_title.
+        title, problem = preview.resolve_title(ctx, p["title"])
+        if problem:
+            raise ToolError(problem)
+        p["title"] = title
+
+        # 0) duplicate guard - before any saved objects are built, because this
+        #    tool's whole failure mode was re-creating the same dashboard on
+        #    every request. Propose-time only; see preview.duplicate_veto for why
+        #    a create-time guard would strand already-approved proposals.
+        veto = preview.duplicate_veto(ctx, p["title"])
+        if veto:
+            raise ToolError(veto)
+
         # 1) schema + panel plan
         try:
             schema = ctx.indexer.field_caps(_INDEX)
@@ -592,4 +608,302 @@ class DesignDetectionDashboard(BaseWazuhTool):
         }
 
 
-TOOLS = [DesignDetectionDashboard]
+def _unresolved_data_refs(visualizations: list[dict[str, Any]]) -> list[str]:
+    """Index-pattern references that do not resolve on the dashboards server.
+
+    Reads each created visualization back and resolves its data reference. A
+    dangling one is silent - the object is created, passes every schema
+    validation, and renders a dashboard of empty panels - so it is worth a round
+    trip per visualization to prove the panels can actually see data.
+
+    This is a diagnostic that runs AFTER the dashboard exists, so it catches
+    broadly and only ever returns strings. Letting a transport error escape here
+    would turn a successful create into a failed one, which is strictly worse
+    than the broken reference it was checking for.
+    """
+    issues: list[str] = []
+    for v in visualizations:
+        slug = v.get("slug")
+        vid = v.get("id")
+        if not vid:
+            issues.append(f"panel {slug!r} was created without a server id")
+            continue
+        try:
+            obj = dashboards_request("GET", f"/api/saved_objects/visualization/{vid}")
+        except Exception as e:  # noqa: BLE001 - diagnostic, must not fail the create
+            issues.append(f"panel {slug!r} could not be read back: {type(e).__name__}: {e}")
+            continue
+        refs = [
+            r for r in ((obj or {}).get("references") or []) if r.get("type") == "index-pattern"
+        ]
+        if not refs:
+            issues.append(f"panel {slug!r} has no index-pattern reference")
+            continue
+        for r in refs:
+            try:
+                dashboards_request("GET", f"/api/saved_objects/index-pattern/{r['id']}")
+            except Exception:  # noqa: BLE001 - a failed resolve IS the finding
+                issues.append(
+                    f"panel {slug!r} references index-pattern "
+                    f"{r['id']!r}, which does not exist on the dashboards server - "
+                    "its panels will render empty"
+                )
+    return issues
+
+
+class DesignThreatIntelDashboard(BaseWazuhTool):
+    """Threat-intelligence dashboard over Wazuh's OWN vulnerability + MITRE data.
+
+    The engineer kept being asked for a dashboard that aggregates CVEs, CVSS
+    scores, severity trends and attacker behaviour, and kept producing an
+    alert-volume dashboard instead - because DesignDetectionDashboard only reads
+    wazuh-alerts-*, and Wazuh indexes the threat data separately. This tool
+    queries where the data actually is.
+
+    Two things it does that the alert dashboard cannot, both forced by what the
+    indexer really holds (see tools/dashboard/threatintel.py for the full
+    measurements):
+
+    * It REPORTS what it cannot build. There is no geo data and no IOC data on
+      this deployment, so those panels do not exist; `unsupported` says so in the
+      proposal instead of shipping two permanently blank charts. An operator who
+      approved a geo panel and got an empty box could not otherwise tell "no
+      attacks from anywhere" from "never collected".
+    * It judges a panel healthy only if its AGGREGATION produced buckets, not if
+      its query matched documents. A panel can match 9000 alerts and still draw
+      an empty chart when its field is unmapped.
+    """
+
+    name = "design_threat_intel_dashboard"
+    description = (
+        "Threat-intelligence dashboard from Wazuh's Vulnerability Detector "
+        "(CVE, CVSS base score, severity, affected packages, scoring source, "
+        "publication timeline) joined with MITRE ATT&CK tactics/techniques from "
+        "the alert stream. Reads "
+        f"{threatintel.THREAT_INDEX} and reports which requested capabilities "
+        "(geo-origin, IOC feeds) have no data behind them. WRITE on execute: "
+        "creates the visualizations + dashboard on the Wazuh dashboard server "
+        "(requires human approval)."
+    )
+    input_schema = {
+        "type": "object",
+        "properties": {
+            "title": {
+                "type": "string",
+                "description": "dashboard title, e.g. 'Threat Intelligence - Vulnerabilities & ATT&CK'",
+            },
+            "description": {"type": "string"},
+            "reason": {"type": "string", "description": "why this dashboard is needed"},
+        },
+        "required": ["title", "reason"],
+    }
+    permission = Permission.PROPOSE
+
+    def run(self, ctx: ToolContext, **params: Any) -> Any:
+        p = self.validate(params)
+        panels = threatintel.panel_plan()
+
+        title, problem = preview.resolve_title(ctx, p["title"])
+        if problem:
+            raise ToolError(problem)
+        p["title"] = title
+
+        veto = preview.duplicate_veto(ctx, p["title"])
+        if veto:
+            raise ToolError(veto)
+
+        # 1) verify the declared schema against the live indexer. _field_caps
+        #    returns nothing for wazuh-states-vulnerabilities-*, so the field
+        #    list is declared and re-probed with real aggregations instead.
+        fields = threatintel.verify_fields(ctx.indexer)
+
+        # 2) run every panel's real aggregation and judge it on buckets.
+        verified = [threatintel.verify_panel(ctx.indexer, panel) for panel in panels]
+        degraded = [v["slug"] for v in verified if not v["healthy"]]
+
+        # 3) the combined data view must exist before any saved object can
+        #    resolve it. Idempotent get-or-create.
+        pattern = threatintel.ensure_index_pattern()
+        if not pattern.get("found"):
+            raise ToolError(
+                "Could not resolve or create the combined index pattern "
+                f"{threatintel.THREAT_INDEX!r} on the dashboards server: "
+                f"{pattern.get('error') or 'not found'}. Create it in the Wazuh "
+                "UI (Management > Index Patterns) and retry - the dashboard's "
+                "panels will not resolve their data source without it."
+            )
+        # The pattern's TITLE is what a human sees and what the preview reports;
+        # its server ID is what a saved object's reference must point at. For
+        # Wazuh's built-in data views the two are identical (their ids ARE the
+        # pattern, e.g. id "wazuh-alerts-*"), which is why the alert tool can
+        # pass one value for both. A pattern created through the API gets a
+        # uuid instead, so pointing a reference at the title leaves the
+        # dashboard unable to resolve its own data source - the panels render
+        # empty with no error anywhere. Use each where it belongs.
+        index_pattern = pattern["title"]
+        index_pattern_id = pattern["id"] or index_pattern
+
+        # 4) build the bundle with the same validated builders the alert
+        #    dashboard uses, so vis types, params, searchSourceJSON references
+        #    and gridData geometry are identical.
+        visualizations: list[dict[str, Any]] = []
+        vis_issues: list[str] = []
+        for panel in panels:
+            attrs, refs = osd.build_visualization_attributes(
+                panel["title"],
+                panel["vis_type"],
+                panel["aggs"],
+                index_pattern_id,
+                query=panel["query"],
+                description=threatintel.summary(),
+            )
+            obj = {
+                "id": f"vis-{panel['slug']}",
+                "type": "visualization",
+                "version": 1,
+                "attributes": attrs,
+                "references": refs,
+            }
+            vis_issues.extend(osd.validate_visualization(obj))
+            visualizations.append(
+                {
+                    "slug": panel["slug"],
+                    "id": obj["id"],
+                    "title": panel["title"],
+                    "vis_type": panel["vis_type"],
+                    "obj": obj,
+                }
+            )
+
+        panels_json, panel_refs = osd.build_panels([v["id"] for v in visualizations])
+        dash_obj = {
+            "id": "dashboard-threat-intel",
+            "type": "dashboard",
+            "version": 1,
+            "attributes": osd.build_dashboard_attributes(
+                p["title"],
+                p.get("description") or threatintel.summary(),
+                panels_json,
+            ),
+            "references": panel_refs,
+        }
+        dash_issues = osd.validate_dashboard(dash_obj)
+        saved_objects = [v["obj"] for v in visualizations] + [dash_obj]
+
+        proposed = {
+            "action": "design_threat_intel_dashboard",
+            "reason": p.get("reason", ""),
+            "payload": {k: p[k] for k in ("title", "description", "reason") if k in p},
+            "permission": self.permission.value,
+        }
+        proposed["generated_config"] = {
+            "title": p["title"],
+            "index_pattern": index_pattern,
+            "visualizations": [
+                {"slug": v["slug"], "title": v["title"], "vis_type": v["vis_type"]}
+                for v in visualizations
+            ],
+            "panelsJSON": panels_json,
+            "saved_objects": saved_objects,
+            "unsupported": threatintel.UNSUPPORTED,
+        }
+        errors = [
+            f"panel '{d}' produced no data: "
+            f"{next((v['note'] for v in verified if v['slug'] == d), '')}"
+            for d in degraded
+        ] + ([f"declared field(s) not found: {fields['missing']}"] if fields["missing"] else [])
+        errors += vis_issues + dash_issues
+        proposed["validation"] = {
+            "valid": not errors,
+            "errors": errors or None,
+            "note": (
+                "Every panel's aggregation was executed against the real indexer. "
+                "Panels are reported healthy only when the aggregation produced "
+                "buckets, not merely when the query matched documents."
+            ),
+            "evidence": {
+                "index": threatintel.THREAT_INDEX,
+                "index_pattern_id": pattern.get("id"),
+                "panels": verified,
+                "fields_present": len(fields["present"]),
+            },
+            "unsupported": threatintel.UNSUPPORTED,
+            "next_steps": [
+                "approve -> create visualizations + dashboard on the dashboards server",
+                "preview the charts in the engineer's Dashboard Preview tab before approving",
+                "open the dashboard in the Wazuh UI to confirm rendering",
+            ],
+        }
+        ctx.approve_or_raise(proposed)
+
+        # --- execution ---------------------------------------------------- #
+        created_vis: list[dict[str, Any]] = []
+        try:
+            for v in visualizations:
+                resp = dashboards_request(
+                    "POST",
+                    "/api/saved_objects/visualization",
+                    body={
+                        "attributes": v["obj"]["attributes"],
+                        "references": v["obj"]["references"],
+                    },
+                )
+                obj = resp.get("saved_object") or resp.get("object") or resp
+                created_vis.append(
+                    {"slug": v["slug"], "id": obj.get("id") or resp.get("id"), "title": v["title"]}
+                )
+        except ToolError as e:
+            raise ToolError(f"Visualization step failed (dashboard not created): {e}") from e
+
+        real_panels_json, real_refs = osd.build_panels([v["id"] for v in created_vis])
+        try:
+            dash = dashboards_request(
+                "POST",
+                "/api/saved_objects/dashboard",
+                body={
+                    "attributes": osd.build_dashboard_attributes(
+                        p["title"], p.get("description") or threatintel.summary(), real_panels_json
+                    ),
+                    "references": real_refs,
+                },
+            )
+        except ToolError as e:
+            raise ToolError(
+                f"Dashboard create failed after {len(created_vis)} visualizations: {e}"
+            ) from e
+        dobj = dash.get("saved_object") or dash.get("object") or dash
+        did = dobj.get("id") or dash.get("id")
+
+        try:
+            fetched = dashboards_request("GET", f"/api/saved_objects/dashboard/{did}")
+            render_issues = osd.validate_dashboard(fetched)
+        except ToolError as e:
+            render_issues = [f"could not read the dashboard back after creating it: {e}"]
+
+        # A saved object can be created, be schema-valid, and still be dead: an
+        # index-pattern reference that does not resolve leaves every panel
+        # showing an empty chart and no error anywhere. This shipped once - the
+        # reference pointed at the pattern's TITLE while the pattern itself had
+        # a uuid id - so it is checked explicitly rather than left for the UI to
+        # reveal.
+        render_issues += _unresolved_data_refs(created_vis)
+
+        return {
+            "status": "executed" if not render_issues else "executed_with_issues",
+            "dashboard_id": did,
+            "title": p["title"],
+            "index_pattern": index_pattern,
+            "visualizations": created_vis,
+            "panels_created": len(created_vis),
+            "verified_panels": [
+                {"slug": v["slug"], "matched": v["matched"], "healthy": v["healthy"]}
+                for v in verified
+            ],
+            "unsupported": threatintel.UNSUPPORTED,
+            "render_check": {"ok": not render_issues, "issues": render_issues},
+            "open_url_path": f"/app/dashboards#/view/{did}",
+            "detail": dash.get("message"),
+        }
+
+
+TOOLS = [DesignDetectionDashboard, DesignThreatIntelDashboard]

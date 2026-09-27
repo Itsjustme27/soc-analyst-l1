@@ -231,6 +231,66 @@
   .chat-msg.agent { align-self: flex-start; background: var(--panel2); border: 1px solid var(--border); border-bottom-left-radius: 4px; color: var(--text); }
   .chat-msg.agent .who { display: flex; align-items: center; gap: 6px; color: var(--accent); font: 600 9.5px var(--mono); letter-spacing: .1em; text-transform: uppercase; margin-bottom: 6px; }
   .chat-msg.error { border-color: var(--red); background: var(--red-soft); color: #eec7bf; }
+
+  /* ---- rendered Markdown (static/md.js) --------------------------------- */
+  /* .chat-msg sets white-space: pre-wrap so multi-line user text keeps its
+     line breaks. That must NOT reach rendered Markdown: the renderer has
+     already turned line breaks into block elements, and pre-wrap on top of that
+     adds a phantom newline per source line - which shreds table rows. Reset it
+     on the block elements the renderer emits, and leave the .chat-msg rule
+     alone so plain textContent messages (user input, error text) are
+     unaffected. */
+  .chat-msg .md-p,
+  .chat-msg .md-table,
+  .chat-msg .md-list,
+  .chat-msg .md-quote,
+  .chat-msg .md-h,
+  .chat-msg .md-hr,
+  .chat-msg .md-pre { white-space: normal; }
+  .chat-msg .md-p { margin: 0 0 8px; }
+  .chat-msg .md-p:last-child { margin-bottom: 0; }
+  .chat-msg .md-h { margin: 12px 0 6px; line-height: 1.3; color: var(--text); }
+  .chat-msg .md-h1 { font-size: 15px; } .chat-msg .md-h2 { font-size: 14px; }
+  .chat-msg .md-h3, .chat-msg .md-h4,
+  .chat-msg .md-h5, .chat-msg .md-h6 { font-size: 13px; color: var(--muted); }
+  .chat-msg .md-list { margin: 0 0 8px; padding-left: 20px; }
+  .chat-msg .md-list li { margin: 2px 0; }
+  .chat-msg .md-list .md-list { margin: 2px 0 2px; }
+  .chat-msg .md-quote {
+    margin: 0 0 8px; padding: 4px 0 4px 10px;
+    border-left: 2px solid rgba(var(--accent-rgb),.45); color: var(--muted);
+  }
+  .chat-msg .md-hr { border: 0; border-top: 1px solid var(--border); margin: 12px 0; }
+  .chat-msg .md-pre {
+    margin: 0 0 8px; padding: 10px 12px; overflow-x: auto;
+    background: var(--bg); border: 1px solid var(--border); border-radius: 8px;
+  }
+  .chat-msg .md-pre code, .chat-msg code {
+    font: 11.5px/1.5 var(--mono); color: var(--accent);
+    background: var(--bg); padding: 1px 4px; border-radius: 4px;
+  }
+  .chat-msg .md-pre code { background: none; padding: 0; color: var(--text); }
+  .chat-msg a { color: var(--accent); text-decoration: none; border-bottom: 1px solid rgba(var(--accent-rgb),.35); }
+  .chat-msg a:hover { border-bottom-color: var(--accent); }
+  /* Tables scroll rather than overflow the 78%-wide bubble. */
+  .chat-msg .md-tablewrap { overflow-x: auto; margin: 0 0 8px; }
+  .chat-msg .md-table { border-collapse: collapse; width: 100%; font-size: 12px; }
+  .chat-msg .md-th {
+    text-align: left; font: 600 10px var(--mono); letter-spacing: .06em;
+    text-transform: uppercase; color: var(--accent);
+    padding: 5px 9px; border-bottom: 1px solid var(--border-strong); white-space: nowrap;
+  }
+  .chat-msg .md-table td {
+    padding: 5px 9px; border-bottom: 1px solid var(--border);
+    color: var(--text); vertical-align: top;
+  }
+  .chat-msg .md-table tbody tr:last-child td { border-bottom: 0; }
+  .chat-msg .md-table td .num { font-family: var(--mono); color: var(--text); }
+  .chat-msg .sev { font: 600 10px var(--mono); letter-spacing: .04em; text-transform: uppercase; padding: 2px 6px; border-radius: 4px; }
+  .chat-msg .sev.critical { color: var(--red); background: var(--red-soft); }
+  .chat-msg .sev.high { color: var(--amber); background: var(--amber-soft); }
+  .chat-msg .sev.medium { color: var(--amber); background: var(--amber-soft); }
+  .chat-msg .sev.low, .chat-msg .sev.info { color: var(--muted); background: rgba(255,255,255,.04); }
   .typing { display: inline-flex; gap: 4px; padding: 4px 2px; }
   .typing i { width: 6px; height: 6px; border-radius: 50%; background: var(--accent); animation: blink 1.2s ease-in-out infinite; }
   .typing i:nth-child(2) { animation-delay: .18s; } .typing i:nth-child(3) { animation-delay: .36s; }
@@ -253,6 +313,22 @@
   }
   .chip:hover { border-color: rgba(var(--accent-rgb),.45); color: var(--accent); }
   .chip:active { transform: scale(.97); }
+
+  /* engineer sub-tabs (Investigate | Dashboard preview) */
+  .subtabs {
+    display: flex; gap: 2px; margin: 12px 0 2px; padding: 3px;
+    background: var(--panel2); border: 1px solid var(--border); border-radius: 999px;
+    width: fit-content;
+  }
+  .subtabs button {
+    background: transparent; border: 0; border-radius: 999px; cursor: pointer;
+    color: var(--muted); font-size: 12px; padding: 7px 16px; font-family: inherit;
+    transition: background .25s var(--ease), color .25s var(--ease);
+  }
+  .subtabs button:hover { color: var(--text); }
+  .subtabs button.active { background: var(--accent-soft); color: var(--accent); }
+  .subpane { display: none; }
+  .subpane.active { display: block; }
 
   /* lookups + rules rows */
   .lookup-row { display: flex; gap: 8px; align-items: center; margin-bottom: 8px; }
@@ -682,6 +758,12 @@
         </div>
       </div>
 
+      <div class="subtabs" id="engineer-subtabs">
+        <button class="active" data-sub="chat">Investigate</button>
+        <button data-sub="preview">Dashboard preview</button>
+      </div>
+
+      <div class="subpane active" id="engineer-pane-chat">
       <div class="chips" id="engineer-chips"></div>
 
       <div class="chat-stage" id="engineer-wrap" style="max-height:420px; overflow:auto;">
@@ -703,6 +785,54 @@
           </button>
         </div>
       </div>
+      </div><!-- /engineer-pane-chat -->
+
+      <div class="subpane" id="engineer-pane-preview">
+        <div class="section-label">Dashboard preview — the real panel queries, drawn from live indexer data</div>
+        <p class="muted" style="margin:0 0 10px;">
+          Every panel below is the exact <code>visState</code> the engineer saves to Wazuh, its aggs run
+          through the same <code>_search</code> endpoint the dashboard will use, laid out in the same
+          <code>gridData</code> geometry. A panel that is empty here is empty there — which is the
+          whole point of approving a picture instead of a JSON blob.
+        </p>
+
+        <div class="row" style="align-items:flex-end; margin-bottom:12px; gap:10px; flex-wrap:wrap;">
+          <label class="field" style="flex:1; min-width:220px;">
+            <span>Dashboard title</span>
+            <input id="pv-title" placeholder="e.g. Web Server Attacks" value="Alert Overview" />
+          </label>
+          <label class="field">
+            <span>Source</span>
+            <select id="pv-kind" onchange="pvKindChanged()">
+              <option value="alerts">alerts — wazuh-alerts-*</option>
+              <option value="threat_intel">threat intel — vulns + ATT&amp;CK</option>
+            </select>
+          </label>
+          <label class="field" id="pv-focus-wrap">
+            <span>Focus</span>
+            <select id="pv-focus">
+              <option value="general">general — all alerts</option>
+              <option value="web">web — rule.groups: web</option>
+              <option value="ssh">ssh — authentication failures</option>
+              <option value="network">network — rule.groups: attack</option>
+            </select>
+          </label>
+          <label class="field" id="pv-index-wrap" style="min-width:180px;">
+            <span>Index</span>
+            <input id="pv-index" placeholder="wazuh-alerts-*" value="wazuh-alerts-*" />
+          </label>
+          <button class="btn primary" id="pv-run" onclick="renderDashboardPreview()">
+            <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M3 3v18h18"/><path d="m7 14 4-4 3 3 5-6"/></svg>
+            Render preview
+          </button>
+        </div>
+
+        <div id="pv-status"></div>
+        <div id="pv-image" style="display:none; margin-top:12px;">
+          <img id="pv-img" alt="Rendered dashboard preview" style="width:100%; border:1px solid var(--border); border-radius:10px; display:block;" />
+        </div>
+        <div id="pv-panels" style="margin-top:12px;"></div>
+      </div><!-- /engineer-pane-preview -->
     </div>
   </section>
 
@@ -821,6 +951,12 @@
   </section>
 
 </div><!-- /shell -->
+
+<!-- Markdown renderer for model output. Must load BEFORE the inline script
+     below, which calls renderMarkdown() when it paints a reply. Served
+     ungated (see _UNGATED_ASSETS in dashboard.py) because a <script src>
+     cannot carry an Authorization header. -->
+<script src="{{ url_for('static', filename='md.js') }}"></script>
 
 <script>
 "use strict";
@@ -1366,7 +1502,9 @@ function renderChatMessages() {
     const el = document.createElement("div");
     el.className = "chat-msg " + (m.role === "user" ? "user" : "agent");
     if (m.role === "agent") {
-      el.innerHTML = `<div class="who">analyst</div>` + esc(m.content);
+      // Markdown, not esc(): the analyst emits GFM tables and fenced code, and
+      // esc() left them on screen as literal pipe-soup with visible "**".
+      el.innerHTML = `<div class="who">analyst</div>` + mdish(m.content);
     } else {
       el.textContent = m.content;
     }
@@ -2001,9 +2139,156 @@ function clearEngineer() {
   engineerMsg("agent", "Thread cleared. Ask me anything about your Wazuh environment.");
 }
 
-function esc(s) { return String(s === undefined || s === null ? "" : s).replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;"); }
+/* ---------------- engineer sub-tabs: Investigate | Dashboard preview ------- */
+for (const b of document.querySelectorAll("#engineer-subtabs button")) {
+  b.addEventListener("click", () => {
+    for (const o of document.querySelectorAll("#engineer-subtabs button"))
+      o.classList.toggle("active", o === b);
+    $("engineer-pane-chat").classList.toggle("active", b.dataset.sub === "chat");
+    $("engineer-pane-preview").classList.toggle("active", b.dataset.sub === "preview");
+  });
+}
+
+const PV_STATUS_STYLE = {
+  ok:    { label: "ok",    color: "var(--accent)", bg: "var(--accent-soft)" },
+  empty: { label: "empty", color: "var(--amber)",  bg: "var(--amber-soft)" },
+  error: { label: "error", color: "var(--red)",    bg: "var(--red-soft)" },
+};
+
+// The two sources have different controls: the alerts plan is chosen by focus
+// against one index, while the threat-intel plan spans two index patterns and
+// ignores both. Leaving a focus selector enabled next to a plan that does not
+// use it invites the operator to believe it did something.
+function pvKindChanged() {
+  const isThreat = $("pv-kind").value === "threat_intel";
+  $("pv-focus-wrap").style.display = isThreat ? "none" : "";
+  $("pv-index-wrap").style.display = isThreat ? "none" : "";
+  $("pv-index").value = isThreat ? "wazuh-alerts-*,wazuh-states-vulnerabilities-*" : "wazuh-alerts-*";
+  if (isThreat && !$("pv-title").dataset.touched) {
+    $("pv-title").value = "Threat Intelligence - Vulnerabilities & ATT&CK";
+  }
+}
+
+async function renderDashboardPreview() {
+  const btn = $("pv-run");
+  const status = $("pv-status");
+  const title = ($("pv-title").value || "").trim();
+  if (!title) {
+    status.innerHTML = `<span class="badge" style="color:var(--red);background:var(--red-soft)">title is required</span>`;
+    return;
+  }
+  $("pv-title").dataset.touched = "1";
+  btn.disabled = true;
+  status.innerHTML = `<span class="badge">rendering against the live indexer…</span>`;
+  $("pv-panels").innerHTML = "";
+  $("pv-image").style.display = "none";
+  const t0 = performance.now();
+  try {
+    const r = await api("/api/engineer/dashboard/preview", {
+      method: "POST",
+      body: JSON.stringify({
+        title,
+        kind: $("pv-kind").value,
+        focus: $("pv-focus").value,
+        index: ($("pv-index").value || "").trim(),
+        by: "dashboard-user",
+      }),
+    });
+    const ms = Math.round(performance.now() - t0);
+
+    // The PNG lives behind the same auth as the JSON, and an <img src> cannot
+    // send an Authorization header - so fetch it as a blob and object-URL it.
+    // (Putting the token in the query string would leak it into access logs.)
+    const img = $("pv-img");
+    if (img.dataset.objectUrl) URL.revokeObjectURL(img.dataset.objectUrl);
+    const png = await fetch(r.png_url, {
+      headers: DASHBOARD_TOKEN ? { Authorization: "Bearer " + DASHBOARD_TOKEN } : {},
+    });
+    if (!png.ok) throw new Error("could not load the rendered preview (" + png.status + ")");
+    const objectUrl = URL.createObjectURL(await png.blob());
+    img.dataset.objectUrl = objectUrl;
+    img.src = objectUrl;
+    $("pv-image").style.display = "block";
+
+    const counts = r.panels.reduce((a, p) => (a[p.status] = (a[p.status] || 0) + 1, a), {});
+    const bits = [`${r.panels.length} panels`, `${r.grid.cols}x${r.grid.rows} grid`, r.index, `${ms}ms`];
+    for (const k of ["ok", "empty", "error"]) {
+      if (counts[k]) bits.push(`${counts[k]} ${k}`);
+    }
+    let html = `<div class="badge" style="background:var(--accent-soft);color:var(--accent)">rendered</div>
+      <span class="muted" style="margin-left:8px;font-size:11.5px">${esc(bits.join(" · "))}</span>`;
+
+    // Duplicate is shown here, before any create is proposed: the create path
+    // refuses a repeated title, so the operator learns about it up front.
+    if (r.duplicate) {
+      html += `<div class="card" style="margin-top:10px;border-color:var(--amber)">
+        <b style="color:var(--amber)">already exists</b>
+        <div class="muted" style="margin-top:4px">
+          A saved dashboard titled <code>${esc(r.duplicate.title)}</code> already exists
+          (id <code>${esc(r.duplicate.id)}</code>${r.duplicate.panels != null ? `, ${esc(r.duplicate.panels)} panels` : ""}).
+          Creating this would make a duplicate — both <code>create_wazuh_dashboard</code> and
+          <code>design_detection_dashboard</code> will refuse. Use <code>update_wazuh_dashboard</code> to change it.
+        </div></div>`;
+    }
+    // Requested capabilities with no data behind them. Shown as a warning rather
+    // than a blank panel, because an empty chart is ambiguous: the operator
+    // cannot otherwise tell "no attacks from anywhere" from "never collected".
+    if (r.unsupported && r.unsupported.length) {
+      html += `<div class="card" style="margin-top:10px;border-color:var(--amber)">
+        <b style="color:var(--amber)">not available in this data</b>
+        ${r.unsupported.map(u => `<div class="muted" style="margin-top:5px">
+          <code>${esc(u.capability)}</code> — ${esc(u.reason)}
+          <div style="margin-top:3px;opacity:.8">would need: ${esc(u.would_need)}</div>
+        </div>`).join("")}
+      </div>`;
+    }
+    status.innerHTML = html;
+
+    $("pv-panels").innerHTML = `<div class="section-label" style="margin-top:4px">panels — each agg run against ${esc(r.index)}</div>` +
+      r.panels.map(p => {
+        const s = PV_STATUS_STYLE[p.status] || PV_STATUS_STYLE.empty;
+        const detail = p.rows && p.rows.length
+          ? `<div class="muted" style="font-size:11px;margin-top:4px;font-family:var(--mono)">${esc(
+              p.rows.slice(0, 6).map(x => `${x.label} = ${x.value}`).join("  ·  "))}${
+              p.rows.length > 6 ? `  ·  +${p.rows.length - 6} more` : ""}</div>`
+          : (p.note ? `<div class="muted" style="font-size:11px;margin-top:4px">${esc(p.note)}</div>` : "");
+        return `<div class="card" style="padding:9px 12px;margin-bottom:7px">
+          <div style="display:flex;align-items:center;gap:9px">
+            <span class="badge" style="color:${s.color};background:${s.bg}">${s.label}</span>
+            <b style="font-size:12.5px">${esc(p.title)}</b>
+            <span class="muted" style="font-size:11px;font-family:var(--mono)">${esc(p.vis_type)}</span>
+            <span style="flex:1"></span>
+            <span class="muted" style="font-size:11px">${p.total != null ? esc(p.total) + " hits" : ""}</span>
+          </div>${detail}</div>`;
+      }).join("");
+  } catch (e) {
+    status.innerHTML = `<span class="badge" style="color:var(--red);background:var(--red-soft)">${esc(e.message)}</span>`;
+  } finally {
+    btn.disabled = false;
+  }
+}
+
+/* The duplicate `esc` that used to sit here has been removed on purpose.
+   It was declared a second time later in this file, and because both were
+   function declarations the LATER one won for the whole script - the weaker
+   one, which escaped & < > but NOT " or '. Every one of the ~90 esc() call
+   sites was silently using it. None of them interpolate into an HTML attribute
+   today, so nothing was exploitable, but a single attribute-context call site
+   away it is an XSS in a security tool. The strong definition at the top of
+   this file (which also handles null/undefined) is now the only one. */
+
+/* Render a model reply as Markdown. static/md.js does the real work; this is a
+   deliberate fallback so a failed/404 script load degrades to escaped text with
+   bold and line breaks instead of dumping raw pipes at the analyst. It is
+   escape-first, so the fallback is not a weaker security posture. */
 function mdish(text) {
-  return esc(text).replace(/\*\*(.+?)\*\*/g, "<b>$1</b>").replace(/\n/g, "<br>");
+  const s = text === undefined || text === null ? "" : String(text);
+  if (typeof renderMarkdown === "function") {
+    try {
+      return renderMarkdown(s);
+    } catch (_) { /* fall through to the escaped form */ }
+  }
+  return esc(s).replace(/\*\*(.+?)\*\*/g, "<b>$1</b>").replace(/\n/g, "<br>");
 }
 
 /* ---------------- approval center ---------------- */

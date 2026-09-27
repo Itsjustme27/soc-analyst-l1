@@ -14,6 +14,7 @@ from __future__ import annotations
 import copy
 import json
 import os
+import pathlib
 import unittest
 from unittest import mock
 
@@ -31,11 +32,11 @@ def make_ctx(wazuh=None, indexer=None, approval=None) -> ToolContext:
     )
 
 
-LOCAL_RULES_TEMPLATE = """<!-- Local rules -->
+LOCAL_RULES_TEMPLATE = r"""<!-- Local rules -->
 <group name="local,syslog,sshd,">
   <rule id="100001" level="5">
     <if_sid>5716</if_sid>
-    <srcip>1.1.1.1</srcip>
+    <regex>^from 1\.1\.1\.1 port</regex>
     <description>sshd: authentication failed from IP 1.1.1.1.</description>
   </rule>
 </group>
@@ -48,6 +49,77 @@ RULE_5760 = {
     "groups": ["authentication_failures"],
     "details": {"match": "Failed password|Failed keyboard|authentication error"},
 }
+
+# The one known-good log line the decoder preflight submits. Mirrors
+# tools/wazuh/logtest.py::CANONICAL_SSHD_FAILED_LOG and is pinned to the
+# fixture tests/fixtures/sample_events/sshd_failed_auth.log by
+# TestLogtestHarness.test_fixture_matches_canonical_preflight_sample.
+CANONICAL_SSHD_FAILED_LOG = (
+    "Dec 10 01:02:02 host sshd[1234]: Failed none for root from 1.1.1.1 port 1066 ssh2"
+)
+CANONICAL_BASE_RULE_ID = 5716
+
+# The event actually under test in TestLogtestHarness. Deliberately a DIFFERENT
+# line from the preflight sample: a fake manager has no way to tell the fixed
+# preflight line from "the sample you were asked to test" if they are the same
+# string, and a harness that silently conflates the two is exactly the class of
+# bug this suite exists to catch. Real Wazuh also fires stock 5716 on this one
+# ('Failed password for ... from ...'), so if_sid: 5716 is the right parent.
+CANDIDATE_SAMPLE_LOG = (
+    "Dec 10 01:02:02 host sshd[5678]: Failed password for admin from 203.0.113.9 port 51234 ssh2"
+)
+
+
+def logtest_hit(rule_id, *, level=5, desc="rule", decoder="sshd", alert=True, token="tok1"):
+    """A 4.7+ shaped logtest response."""
+    return {
+        "data": {
+            "codemsg": 0,
+            "alert": alert,
+            "output": {
+                "rule": {"id": rule_id, "level": level, "description": desc} if alert else {},
+                "decoder": {"name": decoder} if decoder else {},
+            },
+            "token": token,
+        }
+    }
+
+
+NO_DECODER_RESPONSE = {
+    "data": {
+        "codemsg": 0,
+        "alert": False,
+        "output": {"rule": {}, "decoder": {}},
+        "messages": ["No decoder matched."],
+        "token": "tok1",
+    }
+}
+
+
+def with_preflight(handler, *, preflight_token="preflight-tok"):
+    """Wrap a per-event logtest fake with the decoder preflight.
+
+    Every logtest-backed tool now submits the canonical sshd sample first and
+    requires it to decode and fire stock rule 5716 before any sample verdict is
+    reported. Mocks have to answer that call, otherwise the tool correctly
+    refuses to produce results - which is itself the behaviour under test
+    elsewhere (see TestLogtestHarness).
+
+    The canonical call is intercepted here so a handler that counts calls (e.g.
+    to assert session threading) still only sees the real sample calls.
+    """
+    preflight_resp = logtest_hit(
+        CANONICAL_BASE_RULE_ID,
+        desc="sshd: authentication failed.",
+        token=preflight_token,
+    )
+
+    def fake(log, log_format=None, location=None, token=None):
+        if log == CANONICAL_SSHD_FAILED_LOG:
+            return preflight_resp
+        return handler(log, log_format=log_format, location=location, token=token)
+
+    return fake
 
 
 class TestInvestigationTools(unittest.TestCase):
@@ -235,7 +307,12 @@ class TestDetectionEngine(unittest.TestCase):
             return {"data": {"affected_items": [RULE_5760], "total_affected_items": 1}}
 
         wazuh.get_rules.side_effect = fake_get_rules
-        wazuh.run_logtest.return_value = self._no_alert()
+        # preflight-aware: the canonical sshd sample decodes and fires 5716,
+        # real samples are currently undetected (the "candidate adds coverage"
+        # baseline). See with_preflight.
+        wazuh.run_logtest.side_effect = with_preflight(
+            lambda log, log_format=None, location=None, token=None: self._no_alert(token=token)
+        )
         wazuh.end_logtest_session.return_value = {}
         wazuh.put_rules_file.return_value = {
             "message": "Rule was successfully uploaded",
@@ -345,7 +422,7 @@ class TestDetectionEngine(unittest.TestCase):
                 data["token"] = "tok1"
             return {"data": data}
 
-        wazuh.run_logtest.side_effect = fake_logtest
+        wazuh.run_logtest.side_effect = with_preflight(fake_logtest)
         wazuh.end_logtest_session.return_value = {}
         ctx = make_ctx(wazuh=wazuh)
         pos = [
@@ -372,9 +449,12 @@ class TestDetectionEngine(unittest.TestCase):
         self.assertEqual(out["positive_pass"], "1/3")  # fires on the 3rd (threshold)
         self.assertEqual(out["negative_pass"], "1/1")
         # all positives shared ONE session (token threaded); the negative got
-        # a fresh session.
+        # a fresh session. The decoder preflight runs on its own short-lived
+        # session first and is closed as soon as it answers.
         self.assertEqual(tokens_seen, [None, "tok1", "tok1", None])
-        wazuh.end_logtest_session.assert_called_once_with("tok1")
+        closed = [c.args[0] for c in wazuh.end_logtest_session.call_args_list]
+        self.assertIn("tok1", closed)
+        self.assertIn("preflight-tok", closed)
 
     def test_verify_plain_rule(self):
         from tools.detection.detection_engine import VerifyRuleDeployment
@@ -400,7 +480,7 @@ class TestDetectionEngine(unittest.TestCase):
                 }
             }
 
-        wazuh.run_logtest.side_effect = fake_logtest
+        wazuh.run_logtest.side_effect = with_preflight(fake_logtest)
         wazuh.end_logtest_session.return_value = {}
         ctx = make_ctx(wazuh=wazuh)
         out = VerifyRuleDeployment().run(
@@ -419,16 +499,11 @@ class TestDetectionEngine(unittest.TestCase):
 
         wazuh = mock.MagicMock()
         wazuh.get_rules_file.return_value = LOCAL_RULES_TEMPLATE
-        wazuh.run_logtest.return_value = {
-            "data": {
-                "codemsg": 0,
-                "alert": True,
-                "output": {
-                    "rule": {"id": 5760, "level": 5, "description": "sshd: authentication failed."},
-                    "decoder": {"name": "sshd"},
-                },
-            }
-        }
+        wazuh.run_logtest.side_effect = with_preflight(
+            lambda log, log_format=None, location=None, token=None: logtest_hit(
+                5760, desc="sshd: authentication failed."
+            )
+        )
         wazuh.end_logtest_session.return_value = {}
         ctx = make_ctx(wazuh=wazuh)
         out = VerifyRuleDeployment().run(
@@ -448,16 +523,11 @@ class TestDetectionEngine(unittest.TestCase):
             '<group name="local,">\n' + self.FREQ_RULE + "\n</group>\n"
         )
         # the parent fires, the correlation rule never does - the real-world case
-        wazuh.run_logtest.return_value = {
-            "data": {
-                "codemsg": 0,
-                "alert": True,
-                "output": {
-                    "rule": {"id": 5760, "level": 5, "description": "sshd: authentication failed."},
-                    "decoder": {"name": "sshd"},
-                },
-            }
-        }
+        wazuh.run_logtest.side_effect = with_preflight(
+            lambda log, log_format=None, location=None, token=None: logtest_hit(
+                5760, desc="sshd: authentication failed."
+            )
+        )
         wazuh.end_logtest_session.return_value = {}
         ctx = make_ctx(wazuh=wazuh)
         out = VerifyRuleDeployment().run(
@@ -506,7 +576,7 @@ class TestDetectionEngine(unittest.TestCase):
                 }
             }
 
-        wazuh.run_logtest.side_effect = fake_logtest
+        wazuh.run_logtest.side_effect = with_preflight(fake_logtest)
         wazuh.end_logtest_session.return_value = {}
         ctx = make_ctx(wazuh=wazuh)
         out = VerifyRuleDeployment().run(
@@ -518,6 +588,432 @@ class TestDetectionEngine(unittest.TestCase):
         self.assertIs(out["verified"], True)
         self.assertEqual(out["verification"], "confirmed")
         self.assertFalse(out["frequency_rule_unverifiable_via_logtest"])
+
+
+class TestLogtestHarness(unittest.TestCase):
+    """The logtest harness itself.
+
+    The incident: rule validation fed raw rule XML into the logtest socket as
+    if it were a log event - a whole local_rules.xml, or line by line - so
+    every line came back "No decoder matched.", including literal tags like
+    `<if_sid>5716</if_sid>`. That answer is about the *harness*, not the rule,
+    and it looked exactly like a manager verdict.
+
+    These tests pin the three things that make that impossible again:
+      1. rule XML can never reach the `event` field (any layer),
+      2. a failed decoder preflight is surfaced, never laundered into
+         per-sample "no decode" rows,
+      3. a candidate rule is loaded into the ruleset and then tested with ONE
+         real sample event, and the fired rule id is the candidate - not the
+         1002 catch-all.
+    """
+
+    # A candidate rule that chains the stock base rule the canonical sample
+    # fires. If the harness ever stops staging the rule into the ruleset, this
+    # can only ever come back as 5716 (or 1002), and the tests below catch it.
+    # NB the match term is a <regex>. Wazuh's stock local_rules.xml example uses
+    # <srcip> here, but tools/wazuh/validation.py's tag whitelist does not accept
+    # it - a candidate the static validator rejects never reaches the logtest
+    # harness, so these tests would be exercising the validator, not the thing
+    # under test. <regex> is valid under both.
+    CANDIDATE_RULE = (
+        '<rule id="100001" level="5">\n'
+        "  <if_sid>5716</if_sid>\n"
+        "  <regex>^from 1\\.1\\.1\\.1 port</regex>\n"
+        "  <description>sshd: authentication failed from IP 1.1.1.1.</description>\n"
+        "</rule>"
+    )
+
+    def _ctx(self, logtest_handler, *, rules_file=LOCAL_RULES_TEMPLATE):
+        wazuh = mock.MagicMock()
+        wazuh.get_rules_file.return_value = rules_file
+        wazuh.run_logtest.side_effect = logtest_handler
+        wazuh.end_logtest_session.return_value = {}
+        # the candidate id is free and nothing else in the ruleset overlaps
+        wazuh.get_rules.return_value = {"data": {"affected_items": [], "total_affected_items": 0}}
+        wazuh.put_rules_file.return_value = {
+            "message": "Rule was successfully uploaded",
+            "data": {"affected_items": ["local_rules.xml"]},
+        }
+        return make_ctx(wazuh=wazuh)
+
+    @staticmethod
+    def _calls(wazuh):
+        return [c.args[0] for c in wazuh.run_logtest.call_args_list]
+
+    # ------------------------------------------------------------------ #
+    # 1) rule XML must never reach the event field
+    # ------------------------------------------------------------------ #
+    def test_rule_xml_lines_are_refused_as_events(self):
+        """The exact incident input: every line of a local_rules.xml, including
+        the <if_sid> tag, must be refused rather than sent and answered with
+        'No decoder matched.'"""
+        from tools.base import ToolError
+        from tools.wazuh.logtest import RunWazuhLogtest
+
+        ctx = self._ctx(lambda *a, **k: logtest_hit(5716))
+        for line in LOCAL_RULES_TEMPLATE.splitlines():
+            if not line.strip():
+                continue
+            with self.assertRaises(ToolError) as cm:
+                RunWazuhLogtest().run(ctx, log=line, preflight=False)
+            self.assertIn("No decoder matched", str(cm.exception))
+        # not one line of the rules file was ever sent to the manager
+        self.assertEqual(self._calls(ctx.wazuh), [])
+
+    def test_whole_rules_file_blob_is_refused_as_one_event(self):
+        from tools.base import ToolError
+        from tools.wazuh.logtest import RunWazuhLogtest
+
+        ctx = self._ctx(lambda *a, **k: logtest_hit(5716))
+        with self.assertRaises(ToolError) as cm:
+            RunWazuhLogtest().run(ctx, log=LOCAL_RULES_TEMPLATE, preflight=False)
+        self.assertIn("No decoder matched", str(cm.exception))
+        self.assertEqual(self._calls(ctx.wazuh), [])
+
+    def test_api_client_refuses_xml_event_at_the_transport(self):
+        """Defence in depth: the guard is not only in the tool layer. Even a
+        caller that reaches WazuhManagerAPI.run_logtest directly cannot ship
+        rule XML as `event`."""
+        from tools.api_client import WazuhAPIError, WazuhManagerAPI
+
+        api = WazuhManagerAPI(url="https://manager:55000", username="u", password="p")
+        api.put = mock.MagicMock()  # nothing must reach the wire
+        with self.assertRaises(WazuhAPIError) as cm:
+            api.run_logtest("    <if_sid>5716</if_sid>")
+        self.assertIn("No decoder matched", str(cm.exception))
+        api.put.assert_not_called()
+
+    def test_api_client_sends_the_documented_logtest_shape(self):
+        """{log_format, location, event, token?} - event is a real log line."""
+        from tools.api_client import WazuhManagerAPI
+
+        api = WazuhManagerAPI(url="https://manager:55000", username="u", password="p")
+        api.put = mock.MagicMock(return_value={"data": {}})
+        api.run_logtest(
+            CANONICAL_SSHD_FAILED_LOG, log_format="syslog", location="/var/log/auth.log"
+        )
+        body = api.put.call_args.kwargs["body"]
+        self.assertEqual(body["event"], CANONICAL_SSHD_FAILED_LOG)
+        self.assertEqual(body["log_format"], "syslog")
+        self.assertEqual(body["location"], "/var/log/auth.log")
+        self.assertNotIn("token", body)  # omitted on the first call
+        api.run_logtest(CANONICAL_SSHD_FAILED_LOG, token="sess-1")
+        self.assertEqual(api.put.call_args.kwargs["body"]["token"], "sess-1")
+
+    def test_looks_like_xml_does_not_misfire_on_real_log_lines(self):
+        """A guard that cries wolf on ordinary log lines would block legitimate
+        work, so pin both directions: markup in, real events out."""
+        from tools.wazuh.xmlio import looks_like_xml
+
+        for line in (
+            CANONICAL_SSHD_FAILED_LOG,
+            "Dec 10 01:02:02 host sshd[1]: Accepted password for root from 1.1.1.1 port 22 ssh2",
+            'Aug 27 09:12:01 web nginx: 10.0.0.5 GET /a?x=1&y=2 200 12 "-" "curl/8.4"',
+            "Jan  1 00:00:00 host kernel: [12345.678] TCP: request_sock_TCP: Possible SYN flooding",
+        ):
+            self.assertFalse(looks_like_xml(line), f"misfired on: {line}")
+        for blob in (
+            "<if_sid>5716</if_sid>",
+            '  <rule id="100001" level="5">',
+            "<!-- Local rules -->",
+            '<?xml version="1.0"?>',
+            LOCAL_RULES_TEMPLATE,
+        ):
+            self.assertTrue(looks_like_xml(blob), f"missed: {blob}")
+
+    def test_sample_event_in_an_xml_comment_never_yields_tags(self):
+        """The legacy 'example line parked in a local_rules.xml comment' pattern
+        is now a fixture, but the shim must still hand back ONLY the event."""
+        from tools.wazuh.logtest import sample_events_from_xml_comment
+
+        rules = (
+            "<!-- Local rules -->\n"
+            "<!-- sample: Dec 10 01:02:02 host sshd[1234]: Failed none for root "
+            "from 1.1.1.1 port 1066 ssh2 -->\n"
+            '<group name="local,">\n'
+            '  <rule id="100001" level="5"><if_sid>5716</if_sid></rule>\n'
+            "</group>\n"
+        )
+        self.assertEqual(sample_events_from_xml_comment(rules), [CANONICAL_SSHD_FAILED_LOG])
+
+    # ------------------------------------------------------------------ #
+    # 2) a broken decoder set must be surfaced, not laundered
+    # ------------------------------------------------------------------ #
+    def test_preflight_failure_surfaces_instead_of_no_decode_rows(self):
+        """When the canonical line does not decode, 'No decoder matched' on the
+        real samples is meaningless. develop_wazuh_rule must say so and submit
+        nothing, rather than filing every sample as `no_decode`."""
+        from tools.base import ApprovalRequired
+        from tools.detection.detection_engine import DevelopWazuhRule
+
+        ctx = self._ctx(
+            lambda *a, **k: NO_DECODER_RESPONSE, rules_file='<group name="local,">\n</group>\n'
+        )
+        with self.assertRaises(ApprovalRequired) as cm:
+            DevelopWazuhRule().run(
+                ctx,
+                rule_xml=self.CANDIDATE_RULE,
+                positive_samples=[CANDIDATE_SAMPLE_LOG],
+                reason="broken decoder set",
+            )
+        ev = cm.exception.proposed_action["validation"]["evidence"]
+        self.assertTrue(ev["harness_broken"])
+        self.assertIn("no decoders loaded", ev["preflight"]["error"])
+        rows = ev["sample_groups"]["positives"]
+        self.assertEqual([r["class"] for r in rows], ["preflight_failed"])
+        # only the preflight call was made - the sample was never submitted
+        self.assertEqual(self._calls(ctx.wazuh), [CANONICAL_SSHD_FAILED_LOG])
+        self.assertIn("NO logtest verdicts were collected", ev["baseline_summary"])
+
+    def test_verify_refuses_to_report_when_preflight_fails(self):
+        """A verdict built on a session that cannot decode is worse than no
+        verdict: it would blame the rule for the harness."""
+        from tools.base import ToolError
+        from tools.detection.detection_engine import VerifyRuleDeployment
+
+        ctx = self._ctx(lambda *a, **k: NO_DECODER_RESPONSE)
+        with self.assertRaises(ToolError) as cm:
+            VerifyRuleDeployment().run(
+                ctx, rule_id=100001, positive_samples=[CANONICAL_SSHD_FAILED_LOG]
+            )
+        self.assertIn("no decoders loaded", str(cm.exception))
+        self.assertEqual(self._calls(ctx.wazuh), [CANONICAL_SSHD_FAILED_LOG])
+
+    def test_preflight_rejects_a_ruleset_that_lacks_the_base_rule(self):
+        """Decoding is not enough: the canonical sample must also fire stock
+        rule 5716, otherwise an if_sid: 5716 chain cannot be judged here."""
+        from tools.base import ToolError
+        from tools.wazuh.logtest import preflight_decoders
+
+        ctx = self._ctx(lambda *a, **k: logtest_hit(9999, desc="some other rule"))
+        with self.assertRaises(ToolError) as cm:
+            preflight_decoders(ctx.wazuh)
+        self.assertIn("no decoders loaded", str(cm.exception))
+        self.assertIn("5716", str(cm.exception))
+
+    # ------------------------------------------------------------------ #
+    # 3) THE regression test: stage the rule, submit one real event, and the
+    #    candidate's own id must fire - not the 1002 catch-all.
+    # ------------------------------------------------------------------ #
+    def test_candidate_rule_fires_after_staging_on_the_real_sample(self):
+        from tools.base import ApprovalRequired
+        from tools.wazuh.logtest import TestWazuhRule
+
+        seen: list[str] = []
+
+        def fake(log, log_format=None, location=None, token=None):
+            seen.append(log)
+            if log == CANONICAL_SSHD_FAILED_LOG:
+                return logtest_hit(5716, desc="sshd: authentication failed.")
+            # the candidate is now in the ruleset, so the manager fires it
+            return logtest_hit(100001, level=5, desc="sshd: authentication failed from IP 1.1.1.1.")
+
+        ctx = self._ctx(fake)
+
+        # planning first: nothing is written, and the only logtest call is the
+        # read-only preflight - the sample is never submitted, and an approver
+        # is never asked to sign off on a broken harness.
+        with self.assertRaises(ApprovalRequired):
+            TestWazuhRule().run(
+                ctx,
+                rule_xml=self.CANDIDATE_RULE,
+                sample_event=CANDIDATE_SAMPLE_LOG,
+                reason="stage + test",
+            )
+        ctx.wazuh.put_rules_file.assert_not_called()
+        self.assertEqual(seen, [CANONICAL_SSHD_FAILED_LOG])
+        seen.clear()  # forget the planning run; the approved run is what counts
+
+        # with the approval in hand: staged, then tested with ONE real event
+        ctx.approval = {"action": "test_wazuh_rule", "status": "approved"}
+        out = TestWazuhRule().run(
+            ctx,
+            rule_xml=self.CANDIDATE_RULE,
+            sample_event=CANDIDATE_SAMPLE_LOG,
+            reason="stage + test",
+        )
+
+        # THE assertion the incident demands: the candidate fired, NOT 1002.
+        self.assertEqual(out["fired_rule_id"], 100001)
+        self.assertNotIn(out["fired_rule_id"], (1002, 1005))
+        self.assertEqual(out["status"], "tested")
+        self.assertTrue(out["matched"])
+        self.assertFalse(out["catch_all_rule"])
+        self.assertEqual(out["decoder"], "sshd")
+        self.assertEqual(out["fired_level"], 5)
+        self.assertEqual(out["sample"], CANDIDATE_SAMPLE_LOG)
+
+        # the rule really was loaded into the ruleset logtest evaluates
+        self.assertTrue(out["staging"]["staged"])
+        ctx.wazuh.put_rules_file.assert_called_once()
+        self.assertIn('id="100001"', ctx.wazuh.put_rules_file.call_args.args[1])
+        self.assertIn("<if_sid>5716</if_sid>", ctx.wazuh.put_rules_file.call_args.args[1])
+
+        # exactly two logtest calls: the preflight sample, then the one real
+        # sample event. No rules file, no per-line sweep.
+        self.assertEqual(seen, [CANONICAL_SSHD_FAILED_LOG, CANDIDATE_SAMPLE_LOG])
+        for line in seen:
+            self.assertNotIn("<if_sid>", line)
+            self.assertNotIn("<rule", line)
+
+    def test_catch_all_on_a_positive_fails_loudly_not_as_a_null_match(self):
+        """1002 is the generic catch-all: the event decoded but no specific
+        rule matched. Treating that as an ordinary 'some other rule fired'
+        result is how a broken harness passes itself off as a working rule."""
+        from tools.wazuh.logtest import TestWazuhRule
+
+        def fake(log, log_format=None, location=None, token=None):
+            if log == CANONICAL_SSHD_FAILED_LOG:
+                return logtest_hit(5716, desc="sshd: authentication failed.")
+            return logtest_hit(1002, level=0, desc="Log collection: /var/log/auth.log")
+
+        ctx = self._ctx(fake)
+        ctx.approval = {"action": "test_wazuh_rule", "status": "approved"}
+        out = TestWazuhRule().run(
+            ctx,
+            rule_xml=self.CANDIDATE_RULE,
+            sample_event=CANDIDATE_SAMPLE_LOG,
+            reason="catch-all probe",
+        )
+        self.assertEqual(out["fired_rule_id"], 1002)
+        self.assertEqual(out["status"], "catch_all")
+        self.assertTrue(out["catch_all_rule"])
+        self.assertFalse(out["matched"])
+        self.assertIn("catch-all", out["error"])
+        self.assertIn("Do NOT read this as a null-match baseline", out["error"])
+
+    def test_catch_all_positive_makes_verification_inconclusive(self):
+        """Same signal one layer up: a positive swallowed by 1002 is not a
+        per-sample failure of the rule, it is a broken harness - so the verdict
+        must be inconclusive (unknown), never 'failed'."""
+        from tools.detection.detection_engine import VerifyRuleDeployment
+
+        # the preflight decodes fine; the real sample is swallowed by 1002
+        ctx = self._ctx(
+            with_preflight(
+                lambda *a, **k: logtest_hit(1002, level=0, desc="Log collection: /var/log/auth.log")
+            )
+        )
+        out = VerifyRuleDeployment().run(
+            ctx, rule_id=100001, positive_samples=[CANDIDATE_SAMPLE_LOG]
+        )
+        self.assertIsNone(out["verified"])
+        self.assertEqual(out["verification"], "inconclusive")
+        self.assertTrue(out["harness_suspect"])
+        self.assertEqual(len(out["catch_all_hits"]), 1)
+        self.assertIn("catch-all", out["note"])
+
+    def test_candidate_firing_without_an_alert_is_not_reported_as_a_miss(self):
+        """The candidate WAS the rule that fired. Level 0 / noalert is a
+        configuration answer, and reporting it as 'the rule did not match'
+        invites rewriting a rule that in fact works."""
+        from tools.wazuh.logtest import TestWazuhRule
+
+        # 4.7+ shape: the rule that matched is in output.rule, but the manager
+        # did not raise an alert (level 0, or <alert_opts> noalert).
+        no_alert = {
+            "data": {
+                "codemsg": 0,
+                "alert": False,
+                "output": {
+                    "rule": {
+                        "id": 100001,
+                        "level": 0,
+                        "description": "sshd: authentication failed from IP 1.1.1.1.",
+                    },
+                    "decoder": {"name": "sshd"},
+                },
+                "token": "tok-nomatch",
+            }
+        }
+
+        def fake(log, log_format=None, location=None, token=None):
+            if log == CANONICAL_SSHD_FAILED_LOG:
+                return logtest_hit(5716, desc="sshd: authentication failed.")
+            return no_alert
+
+        ctx = self._ctx(fake)
+        ctx.approval = {"action": "test_wazuh_rule", "status": "approved"}
+        out = TestWazuhRule().run(
+            ctx,
+            rule_xml=self.CANDIDATE_RULE,
+            sample_event=CANDIDATE_SAMPLE_LOG,
+            reason="alerting check",
+        )
+        self.assertEqual(out["fired_rule_id"], 100001)
+        self.assertEqual(out["status"], "no_alert")
+        self.assertFalse(out["matched"])
+        self.assertIn("did not raise an alert", out["error"])
+        self.assertIn("not a matching failure", out["error"])
+
+    def test_logtest_called_once_per_case_not_once_per_line(self):
+        """The shape of the fix: ONE logtest call for (rule staged + 1 event)."""
+        from tools.wazuh.logtest import TestWazuhRule
+
+        ctx = self._ctx(
+            with_preflight(
+                lambda log, log_format=None, location=None, token=None: logtest_hit(
+                    100001, desc="sshd: authentication failed from IP 1.1.1.1."
+                )
+            )
+        )
+        ctx.approval = {"action": "test_wazuh_rule", "status": "approved"}
+        TestWazuhRule().run(
+            ctx,
+            rule_xml=self.CANDIDATE_RULE,
+            sample_event=CANDIDATE_SAMPLE_LOG,
+            reason="call count",
+        )
+        self.assertEqual(len(ctx.wazuh.run_logtest.call_args_list), 2)  # preflight + 1 event
+
+    def test_rule_xml_passed_as_the_sample_event_is_refused(self):
+        from tools.base import ApprovalRequired, ToolError
+        from tools.wazuh.logtest import TestWazuhRule
+
+        ctx = self._ctx(lambda *a, **k: logtest_hit(5716))
+        ctx.approval = {"action": "test_wazuh_rule", "status": "approved"}
+        with self.assertRaises(ToolError) as cm:
+            TestWazuhRule().run(
+                ctx,
+                rule_xml=self.CANDIDATE_RULE,
+                sample_event=self.CANDIDATE_RULE,  # <-- the bug, verbatim
+                reason="misuse",
+            )
+        self.assertIn("No decoder matched", str(cm.exception))
+        self.assertEqual(self._calls(ctx.wazuh), [])
+        self.assertIsNotNone(ApprovalRequired)  # gate is still a real gate
+
+    def test_static_validation_runs_before_any_manager_round_trip(self):
+        """XML structure is answered by the parser, never by the socket: a
+        malformed rule must not cost a logtest call."""
+        from tools.base import ToolError
+        from tools.wazuh.logtest import TestWazuhRule
+
+        ctx = self._ctx(lambda *a, **k: logtest_hit(5716))
+        ctx.approval = {"action": "test_wazuh_rule", "status": "approved"}
+        with self.assertRaises(ToolError):
+            TestWazuhRule().run(
+                ctx,
+                rule_xml='<rule id="100001" level="5"><frequency>3</frequency></rule>',
+                sample_event=CANONICAL_SSHD_FAILED_LOG,
+                reason="malformed",
+            )
+        self.assertEqual(self._calls(ctx.wazuh), [])
+
+    # ------------------------------------------------------------------ #
+    # the fixture is the single source for the canonical sample
+    # ------------------------------------------------------------------ #
+    def test_fixture_matches_canonical_preflight_sample(self):
+        from tools.wazuh.logtest import CANONICAL_SSHD_FAILED_LOG
+
+        path = pathlib.Path(__file__).parent / "fixtures" / "sample_events" / "sshd_failed_auth.log"
+        self.assertTrue(path.exists(), "canonical sample fixture is missing")
+        self.assertEqual(path.read_text().strip(), CANONICAL_SSHD_FAILED_LOG)
+        self.assertEqual(CANONICAL_SSHD_FAILED_LOG, CANONICAL_SSHD_FAILED_LOG)
+        # the local_rules.xml example in this test file must not double as the
+        # event fixture - keep them separate so a line sweep cannot confuse them
+        self.assertNotIn(CANONICAL_SSHD_FAILED_LOG, LOCAL_RULES_TEMPLATE)
 
 
 class TestDashboardEngine(unittest.TestCase):

@@ -301,22 +301,32 @@ class LiveEnv:
             time.sleep(poll_s)
         return False
 
-    def wait_for_logtest(self, timeout_s: float = 300.0, poll_s: float = 5.0,
-                         probe_log: str | None = None) -> bool:
-        """Block until wazuh-analysisd's logtest engine accepts events. After a
-        manager restart the API reports daemons 'running' before logtest can
-        evaluate - probe until the 'daemons not ready' error goes away."""
-        probe_log = probe_log or ("Oct 24 06:00:00 testhost sshd[1000]: Accepted password "
-                                  "for phase14-probe from 203.0.113.200 port 22 ssh2")
+    def wait_for_logtest(self, timeout_s: float = 300.0, poll_s: float = 5.0) -> bool:
+        """Block until logtest can actually EVALUATE an event, not merely answer.
+
+        After a manager restart the API reports daemons 'running' before
+        wazuh-analysisd can decode anything, and the pre-restart failure mode
+        is an HTTP error string. Checking only for the absence of that string
+        is not enough: a session with no decoders loaded answers a real log
+        line with "No decoder matched." and no error at all, so the old probe
+        (which submitted an arbitrary "Accepted password" line and only
+        checked for the absence of two error substrings) reported "ready" and
+        every scenario then recorded `no_decode` for every sample - a harness
+        fault recorded as rule behaviour.
+
+        So this runs the real decoder preflight: the canonical known-good line
+        must decode AND fire stock rule 5716. Anything less is not ready. The
+        probe line is deliberately not configurable - it is only meaningful if
+        it is the one line whose decoded outcome is already known.
+        """
+        from tools.wazuh.logtest import preflight_decoders
+
         deadline = time.time() + timeout_s
         while time.time() < deadline:
             try:
-                row = self.wazuh.run_logtest(probe_log, "syslog") or {}
-                blob = str(row).lower()
-                if ("not running or not yet available" not in blob
-                        and "not ready yet" not in blob):
+                if preflight_decoders(self.wazuh).get("ok"):
                     return True
-            except Exception:  # noqa: BLE001 - still warming up
+            except Exception:  # noqa: BLE001 - still warming up, or not yet decodable
                 pass
             time.sleep(poll_s)
         return False

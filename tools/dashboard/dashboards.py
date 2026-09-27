@@ -16,6 +16,7 @@ from typing import Any
 
 from tools.base import BaseWazuhTool, Permission, ToolContext, ToolError
 from tools.dashboard import osd_objects as osd
+from tools.dashboard import preview as preview_mod
 from tools.dashboard.client import dashboards_request
 
 
@@ -187,6 +188,30 @@ class CreateWazuhDashboard(BaseWazuhTool):
 
     def run(self, ctx: ToolContext, **params: Any) -> Any:
         p = self.validate(params)
+
+        # Title has to be a name, not the request text. See preview.resolve_title.
+        title, problem = preview_mod.resolve_title(ctx, p["title"])
+        if problem:
+            raise ToolError(problem)
+        p["title"] = title
+
+        # Refuse to create a second dashboard with a title that already exists.
+        # Without this the engineer re-creates the same dashboard on every
+        # request: the saved-objects API happily accepts a duplicate id, so the
+        # operator ends up with N copies and no error to explain why.
+        #
+        # Checked FIRST, before the visualization ids are resolved. A repeat is
+        # the common case here, and making the operator wait on per-panel saved
+        # object lookups only to be told the title already exists would be both
+        # slower and more confusing than saying so immediately.
+        #
+        # Propose-time only - preview.duplicate_veto stands down when an
+        # approved proposal is being replayed, so this cannot strand a
+        # proposal the operator already approved.
+        veto = preview_mod.duplicate_veto(ctx, p["title"])
+        if veto:
+            raise ToolError(veto)
+
         vis_ids = _normalize_panel_ids(p.get("panels"))
         _require_visualizations(vis_ids)
 

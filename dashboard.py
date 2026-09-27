@@ -26,6 +26,8 @@ import hmac
 import json
 import logging
 import os
+import re
+import secrets
 import signal
 import subprocess
 import sys
@@ -33,7 +35,7 @@ import time
 from dataclasses import asdict
 from pathlib import Path
 
-from flask import Flask, jsonify, render_template, request
+from flask import Flask, jsonify, render_template, request, send_file
 from werkzeug.exceptions import HTTPException
 
 import agent_control as ac
@@ -229,12 +231,22 @@ def _require_role(minimum: str):
     return None
 
 
+# Static assets the page shell needs before it can authenticate. A <script src>
+# cannot send an Authorization header, so gating these would leave the console
+# permanently broken with auth on. Listed by exact path, NOT as a blanket
+# "/static/" rule: that directory is served by Flask and a prefix exemption would
+# silently publish whatever else is ever dropped into it.
+_UNGATED_ASSETS = frozenset({"/static/md.js"})
+
+
 @app.before_request
 def _require_dashboard_token():
     if not _auth_configured():
         return None  # auth disabled (default) - purely local use
     if request.path == "/":
         return None  # let the page shell load; every /api/* call below is still gated
+    if request.path in _UNGATED_ASSETS:
+        return None
     user, _ = _token_user() or (None, None)
     if user is not None or _token_ok():
         return None
@@ -944,7 +956,9 @@ def api_agent_start():
             error=str(e),
         )
         return (
-            jsonify({"error": _safe_error(e, "Could not start the watcher: unknown SIEM/pipeline.")}),
+            jsonify(
+                {"error": _safe_error(e, "Could not start the watcher: unknown SIEM/pipeline.")}
+            ),
             400,
         )
     _audit_write("agent_start", {"agent_id": "default", "provider_id": provider_id}, {"pid": pid})
@@ -999,7 +1013,9 @@ def api_agents_start():
             error=str(e),
         )
         return (
-            jsonify({"error": _safe_error(e, "Could not start the watcher: unknown SIEM/pipeline.")}),
+            jsonify(
+                {"error": _safe_error(e, "Could not start the watcher: unknown SIEM/pipeline.")}
+            ),
             400,
         )
     _audit_write("agent_start", {"agent_id": agent_id, "provider_id": provider_id}, {"pid": pid})
@@ -1147,6 +1163,147 @@ def api_engineer_tool():
     ctx = _engineer_context(user=body.get("by") or "dashboard-user", agent="engineer_ui")
     outcome = run_tool(ctx, name, params)
     return jsonify(outcome)
+
+
+# --------------------- Engineer: dashboard preview --------------------- #
+# Preview PNGs are addressed by an opaque random token, never by a title or any
+# caller-supplied filename: the name goes straight into a filesystem path, and a
+# title is attacker-influenced text that must not be able to escape PREVIEW_DIR.
+_PREVIEW_TOKEN = re.compile(r"^[0-9a-f]{32}$")
+_PREVIEW_KEEP = 40  # render artifacts are throwaway; bound the directory
+
+
+def _preview_dir() -> Path:
+    d = Path(getattr(cfg, "PREVIEW_DIR", "") or "data/previews")
+    d.mkdir(parents=True, exist_ok=True)
+    return d
+
+
+def _prune_previews(keep: int = _PREVIEW_KEEP) -> None:
+    """Drop all but the newest `keep` preview PNGs.
+
+    Best-effort: a failure here must never fail the render that just succeeded,
+    so every error is swallowed. Unbounded PNGs would otherwise grow forever
+    (each one is ~100 KB and they are pure cache).
+    """
+    try:
+        files = sorted(_preview_dir().glob("*.png"), key=lambda p: p.stat().st_mtime, reverse=True)
+        for old in files[keep:]:
+            old.unlink(missing_ok=True)
+    except OSError:
+        pass
+
+
+@app.post("/api/engineer/dashboard/preview")
+def api_engineer_dashboard_preview():
+    """Render a proposed dashboard to PNG from LIVE indexer data.
+
+    The panels are the *actual* panel plan the engineer tool builds
+    (tools/dashboard/engine.py::_panel_plan) and the aggs run through the same
+    `_search` endpoint the saved dashboard will use, laid out with the same
+    gridData geometry. So the operator approves a picture of the real thing
+    rather than a JSON blob, and an empty panel is visible as an empty panel.
+
+    Read-only (it only queries the indexer and draws a PNG), but gated at
+    `approver` to match the other /api/engineer/* routes - this is the artifact
+    the approver is meant to reason about, and it exposes index contents.
+
+    Body: {title, focus, index?, panels?, by?}
+      - panels: explicit [{title, vis_type, aggs, query}] to preview an
+        arbitrary draft; omit to use the deterministic `focus` plan.
+    """
+    denied = _require_role("approver")
+    if denied:
+        return denied
+    from tools.dashboard import engine as dash_engine
+    from tools.dashboard import preview as dash_preview
+    from tools.dashboard import threatintel as dash_threatintel
+
+    body = request.get_json(force=True, silent=True) or {}
+    title = (body.get("title") or "").strip()
+    if not title:
+        return jsonify({"error": "title is required."}), 400
+    index = (body.get("index") or "").strip() or dash_engine._INDEX
+    focus = (body.get("focus") or "general").strip().lower()
+
+    ctx = _engineer_context(user=(body.get("by") or "dashboard-user"), agent="engineer_preview")
+
+    # Explicit draft panels, or the plan the tool itself would build.
+    panels = body.get("panels")
+    if panels is not None:
+        if not isinstance(panels, list) or not panels:
+            return jsonify({"error": "panels must be a non-empty list."}), 400
+    else:
+        kind = (body.get("kind") or "alerts").strip().lower()
+        if kind == "threat_intel":
+            # Same panels the tool builds, over the combined index pattern. No
+            # field_caps step: it returns nothing for the vulnerabilities index,
+            # so the field list is declared in threatintel and re-probed live.
+            from tools.dashboard import threatintel
+
+            panels = dash_threatintel.panel_plan()
+            index = threatintel.THREAT_INDEX
+        else:
+            try:
+                schema = ctx.indexer.field_caps(index)
+                panels = dash_engine._panel_plan(focus, schema)
+            except Exception as e:  # noqa: BLE001 - surface indexer/schema errors
+                return jsonify({"error": f"Cannot read indexer schema: {e}"}), 400
+
+    token = secrets.token_hex(16)
+    out_path = _preview_dir() / f"{token}.png"
+    try:
+        result = dash_preview.render_dashboard_preview(
+            panels,
+            ctx.indexer,
+            out_path,
+            index=index,
+            title=title,
+            subtitle=f"preview - {index} - panels rendered from live indexer data",
+        )
+    except dash_preview.PreviewError as e:
+        return jsonify({"error": str(e)}), 400
+    except Exception as e:  # noqa: BLE001 - never 500 on a render problem
+        return jsonify({"error": f"Preview failed: {type(e).__name__}: {e}"}), 400
+
+    _prune_previews()
+    return jsonify(
+        {
+            "token": token,
+            "png_url": f"/api/engineer/dashboard/preview/{token}.png",
+            "title": title,
+            "focus": focus if not body.get("panels") else "custom",
+            "index": index,
+            "grid": result["grid"],
+            "panels": result["panels"],
+            "empty": result["empty"],
+            "errors": result["errors"],
+            # Requested capabilities with no data behind them, so the operator
+            # learns before approving rather than after seeing a blank chart.
+            "unsupported": dash_threatintel.UNSUPPORTED
+            if (body.get("kind") or "alerts") == "threat_intel"
+            else None,
+            # Surfaced so the operator learns about a repeat *before* the
+            # create is proposed - create_wazuh_dashboard and
+            # design_detection_dashboard both refuse a duplicate title.
+            "duplicate": dash_preview.find_duplicate(title),
+        }
+    )
+
+
+@app.get("/api/engineer/dashboard/preview/<name>.png")
+def api_engineer_dashboard_preview_png(name: str):
+    """Serve one rendered preview PNG. Token-only, resolved under PREVIEW_DIR."""
+    denied = _require_role("approver")
+    if denied:
+        return denied
+    stem = name[:-4] if name.lower().endswith(".png") else name
+    if not _PREVIEW_TOKEN.fullmatch(stem):
+        return jsonify({"error": "invalid preview token."}), 400
+    path = _preview_dir() / f"{stem}.png"
+    if not path.is_file():
+        return jsonify({"error": "preview not found - it may have been pruned."}), 404
+    return send_file(path, mimetype="image/png", max_age=300)
 
 
 # ------------------------- Approval Center ------------------------- #

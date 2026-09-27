@@ -1,5 +1,9 @@
 anthropic>=0.40.0
 chromadb>=0.5.0
 flask>=3.0.0
+# Server-side dashboard previews (tools/dashboard/preview.py). Optional at
+# runtime - the module imports without it and only render_dashboard_preview()
+# needs it, raising one clear "pip install matplotlib" error.
+matplotlib>=3.8.0
 python-dotenv>=1.0.0
 requests>=2.31.0

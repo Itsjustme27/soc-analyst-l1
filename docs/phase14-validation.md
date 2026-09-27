@@ -109,6 +109,16 @@ A repeated-SSH-failure detection rule (unique `phase14_<HHMMSS>` marker,
    `verified: True` (Wazuh-confirmed).
 
 **Findings found live (fixed in scenario + documented):**
+> **Superseded (post-2026-09-24).** The `verified: True` above for a
+> `frequency` rule is no longer what the tool reports. A later live measurement
+> showed logtest does **not** hold frequency state: 8 repeated failures through
+> a single session never tripped a `frequency="5"` rule while the live pipeline
+> did. `verify_rule_deployment` now forces `verified: null` /
+> `verification: "inconclusive"` / `frequency_rule_unverifiable_via_logtest:
+> true` for any frequency rule, rather than trusting an `N`-th-sample trip that
+> does not reliably reproduce. The per-sample `positive_pass 1/N` observed in
+> this run was consistent with that; the tool no longer reads it as a pass.
+> See `README.md` and `wazuh_docs/wazuh-logtest.md`.
 - `frequency=8` needs exactly 8 positive samples in ONE logtest session
   (tool caps positives at 8); samples must carry the rule's `<match>` marker as
   a **standalone token** (Wazuh matches tokens, `phase14_12345u0` never matches

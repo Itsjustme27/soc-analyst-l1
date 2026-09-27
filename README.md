@@ -608,6 +608,43 @@ All of them are role-gated and now write to the audit log (`tool="dashboard_ui"`
 
 To confirm the correlation itself, push real events through analysisd (agent or syslog input) and read the alert stream, or check the rule is loaded and enabled with `GET /rules/<id>` and trust the live engine.
 
+### `event` is a log line — never rule XML
+
+`logtest` takes exactly one shape, on the unix socket
+(`/var/ossec/queue/sockets/logtest`) and on `PUT /logtest` alike:
+
+```json
+{ "log_format": "syslog",
+  "location":   "master->/var/log/auth.log",
+  "event":      "Dec 10 01:02:02 host sshd[1234]: Failed none for root from 1.1.1.1 port 1066 ssh2",
+  "token":      "<from the previous call; omit on the first>" }
+```
+
+`event` is **one real log line**. A `<rule>` block, a whole `local_rules.xml`,
+or a single line of one cannot decode, ever — the manager answers every one of
+them with `No decoder matched.`, so a harness that sweeps a rules file through
+`event` manufactures a clean-looking verdict for every line of a file that was
+never tested. To test a rule you load it into the ruleset (`PUT
+/rules/files/local_rules.xml` + manager restart) and then submit a real log line;
+`test_wazuh_rule` does the staging and makes that one call. Rule XML is checked
+for *structure* by `xmlio.safe_fromstring` / `tools/wazuh/validation.py`, which
+never touch the socket. `tools/wazuh/xmlio.py::ensure_real_event` now refuses
+rule XML at every boundary that feeds `event`, transport included.
+
+Two more things that read as verdicts but are not:
+
+- **Preflight first.** A session with no decoders loaded fails even a perfect
+  log line, so every result from it is garbage. Before trusting anything we
+  submit one known-good canonical line and require it to decode *and* fire stock
+  rule `5716` (`tests/fixtures/sample_events/sshd_failed_auth.log`). A failed
+  preflight is reported as "logtest session has no decoders loaded" with **no**
+  per-sample verdicts, rather than filing every sample as `no_decode`.
+- **Rule `1002` is a catch-all, not a null match.** It fires on anything that
+  decoded but matched no specific rule. On a *positive* sample that means the
+  sample never reached the candidate's match terms — usually the manager has not
+  been restarted since the rule was uploaded. That forces the verdict to
+  `inconclusive`, never `failed`.
+
 Two related gotchas this toolchain hit for real:
 
 - **`<if_matched_sid>` and `<same_source_ip/>` must be child elements** on a Wazuh 4.x build. The attribute form (`if_matched_sid="5710,5760" same_source_ip="yes"`) is rejected by the manager with `1113: XML syntax error`.

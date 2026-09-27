@@ -9,6 +9,7 @@ malformed pack" guarantee.
 
 from __future__ import annotations
 
+import re
 import tempfile
 import unittest
 from pathlib import Path
@@ -302,6 +303,123 @@ class TestSkillsSuggestion(unittest.TestCase):
             self.assertEqual(names, [])
         finally:
             td.cleanup()
+
+
+class TestWazuhDashboardMasterPack(unittest.TestCase):
+    """The wazuh-dashboard-master pack must keep all five pillars, keep the
+    auto-activation triggers that make it load automatically, and keep the two
+    corrections that stop the agent inventing features that do not exist
+    (there is no put_rules_file tool and no geo-IP support in this repo).
+
+    Referenced-path checks are deliberately limited to .py: runtime data files
+    (data/*.jsonl) are created on first write and manager-side files
+    (local_rules.xml) live on the Wazuh manager, so neither is expected to
+    exist in this checkout.
+    """
+
+    PACK = "wazuh-dashboard-master"
+    PILLARS = ("Reporting", "Alerting", "Anomaly detection", "Maps", "Notifications")
+    OWNERS = (
+        "metrics.py",
+        "digest.py",
+        "rules.py",
+        "connectors/crowdstrike_connector.py",
+        "tools/gaps/",
+        "notify.py",
+    )
+    TRIGGERS = (
+        "report",
+        "digest",
+        "alert",
+        "rule",
+        "anomaly",
+        "gap",
+        "geo",
+        "map",
+        "notif",
+        "dashboard",
+    )
+
+    def _skill(self):
+        loaded = {s.name: s for s in discover_skills()}
+        self.assertIn(self.PACK, loaded, f"{self.PACK} is not discoverable")
+        return loaded[self.PACK]
+
+    def test_pack_is_discoverable_with_a_valid_name(self):
+        skill = self._skill()
+        self.assertRegex(skill.name, r"^[a-z0-9][a-z0-9-]{0,63}$")
+        self.assertTrue(skill.body.strip())
+        self.assertTrue(skill.description.strip())
+
+    def test_description_survives_the_cap(self):
+        """agent/skills.py truncates descriptions at _DESCRIPTION_CAP, so a
+        longer description would silently lose its trailing trigger terms."""
+        self.assertLessEqual(len(self._skill().description), 300)
+
+    def test_all_five_pillars_have_their_own_section(self):
+        """Assert on the heading, not the bare word: the pillar names also
+        appear in the routing table and description, so a substring check would
+        pass even with the section itself deleted."""
+        body = self._skill().body
+        for pillar in self.PILLARS:
+            with self.subTest(pillar=pillar):
+                self.assertRegex(body, rf"(?m)^## \d+\.\s+{re.escape(pillar)}\b")
+
+    def test_declared_code_owners_present(self):
+        body = self._skill().body
+        for ref in self.OWNERS:
+            with self.subTest(ref=ref):
+                self.assertIn(ref, body)
+
+    def test_referenced_source_files_exist(self):
+        """A skill must not point the agent at a module that was renamed."""
+        repo = Path(__file__).resolve().parent.parent
+        for ref in set(re.findall(r"`([A-Za-z0-9_./-]+\.py)`", self._skill().body)):
+            with self.subTest(ref=ref):
+                self.assertTrue((repo / ref).exists(), f"missing {ref!r}")
+
+    def test_activation_triggers_present(self):
+        desc = self._skill().description.lower()
+        for trigger in self.TRIGGERS:
+            with self.subTest(trigger=trigger):
+                self.assertIn(trigger, desc, f"description lacks {trigger!r}")
+
+    def test_auto_activates_for_each_pillar(self):
+        """suggest_skills is the auto-activation path, so assert on it rather
+        than on the description text: the pack must actually surface for a
+        request naming each pillar."""
+        cases = {
+            "Reporting": "generate a daily report of today's alerts",
+            "Alerting": "set up alerting for repeated SSH failures",
+            "Anomaly detection": "what detection gaps do I have in my telemetry",
+            "Maps": "show me a map of where the attackers are",
+            "Notifications": "I want to be notified when this rule fires",
+        }
+        for pillar, message in cases.items():
+            with self.subTest(pillar=pillar):
+                self.assertIn(
+                    self.PACK,
+                    suggest_skills(message),
+                    f"{pillar} request did not surface the pack",
+                )
+
+    def test_does_not_claim_a_put_rules_file_tool(self):
+        """put_rules_file is a client method the rule tools wrap, not a tool
+        the agent can call. Claiming otherwise makes the agent call a tool that
+        does not exist."""
+        body = self._skill().body
+        self.assertIn("no tool called `put_rules_file`", body)
+        self.assertIn("api_client.py", body)
+
+    def test_does_not_claim_geoip_support(self):
+        """There is no geo-IP code in this repo, so the pack must require
+        verifying geo fields before summarising geography."""
+        body = self._skill().body
+        self.assertIn("no geo-IP code in this repo", body)
+        self.assertIn("Never guess a country from an IP", body)
+
+    def test_action_notify_requirement(self):
+        self.assertIn("action.notify", self._skill().body)
 
 
 if __name__ == "__main__":

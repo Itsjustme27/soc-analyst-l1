@@ -100,6 +100,9 @@ class Config:
     CHAT_LOG_PATH = os.getenv("CHAT_LOG_PATH", "data/chat_log.jsonl")
     # AI SOC Engineer conversation transcripts (dashboard /api/engineer/chat).
     ENGINEER_LOG_PATH = os.getenv("ENGINEER_LOG_PATH", "data/engineer_log.jsonl")
+    # Rendered dashboard preview PNGs (matplotlib, Agg backend - headless).
+    # Served by token name only; see tools/dashboard/preview.py.
+    PREVIEW_DIR = os.getenv("PREVIEW_DIR", "data/previews")
 
     # Lookup tables - small named threat-intel stores for the chat agent and
     # dashboard (see lookup_tables.py). Single atomic JSON file.

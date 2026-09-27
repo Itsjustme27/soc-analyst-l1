@@ -21,9 +21,20 @@ seeded into the RAG store).
      The canonical SSH-failure parent is rule **5760**.
 2. **Pre-flight** — the proposed id is free (`get_rules(q=id=…)`), the parent
    rule exists, and the proposed XML doesn't overlap existing rules.
-3. **Logtest baseline** — positives/negatives run through `run_logtest` and
-   classified (fired-new-id / fired-other / no-decode / clean).
-4. **Proposal** — `{action: create_wazuh_rule, payload: {rule_xml, overwrite:
+3. **Decoder preflight** — one known-good canonical line
+   (`tests/fixtures/sample_events/sshd_failed_auth.log`) is submitted and must
+   decode **and** fire stock rule `5716`. A session with no decoders loaded
+   fails even a perfect sample, so without this check every row below would be
+   filed as `no_decode` — a statement about the harness wearing the costume of
+   a statement about the rule. On failure the proposal carries
+   `harness_broken: true`, every sample row is classed `preflight_failed`
+   (submitted zero times), and `baseline_summary` says no verdicts were
+   collected.
+4. **Logtest baseline** — positives/negatives are each submitted once, as real
+   log events, and classified (`already_covered` / `catch_all` / `no_decode` /
+   `fires_other` / `clean`). Rule XML is never an `event`: structure is
+   answered by the parser in step 1, behaviour only by the manager.
+5. **Proposal** — `{action: create_wazuh_rule, payload: {rule_xml, overwrite:
    false, reason}, generated_config: <merged local_rules.xml diff>, …}`.
 
 Execution (approved) merges the rule into `local_rules.xml`, PUTs it
@@ -31,19 +42,47 @@ Execution (approved) merges the rule into `local_rules.xml`, PUTs it
 message. A manager **restart** (separate approval) is needed before rules
 load — `RestartWazuhManager`.
 
+## test_wazuh_rule (PROPOSE)
+
+`test_wazuh_rule(rule_xml, sample_event, reason)`: the one rule + one real log
+line case, for when you want the fired rule id before or right after a
+restart. Static XML validation → decoder preflight → stage into
+`local_rules.xml` (approval-gated `PUT`) → **exactly one** logtest call with the
+real event.
+
+`event` is a log line, always. A `<rule>` block or a line of one is refused by
+`tools/wazuh/xmlio.py::ensure_real_event` before any round trip — the manager's
+only possible answer would be "No decoder matched.", for every line, which is
+indistinguishable from a real verdict. `status` is one of `tested` / `catch_all`
+/ `no_decode` / `not_matched` / `no_alert`; **only `tested`** is a statement
+about whether the rule works — the rest each carry an `error` saying why no
+verdict was produced. After staging it also returns `restart_required: true` and
+the explicit `next_steps` (a restart is EXECUTE with its own approval, so it is
+not smuggled into this PROPOSE tool).
+
 ## verify_rule_deployment (READ)
 
 `verify_rule_deployment(rule_id, positive_samples, negative_samples)`:
 
+- **decoder preflight first.** A verdict built on a session that cannot decode
+  is worse than no verdict — it would blame the rule for the harness. It raises
+  instead.
 - plain rules: every positive must fire the new id; negatives must fire
   something else.
-- **frequency rules**: one logtest session (token threaded through all
-  positives). With `frequency=N`, the first N-1 samples fire the **parent**
-  rule — expected — and the Nth fires the new rule. `positive_pass` reads
-  `1/3` for frequency=3 by design; `verified=True` is the meaningful signal.
-  A clean, logged-out sample classifies `no_decode` and makes the sample
-  useless (replace with a realistic line).
+- **frequency rules: inconclusive, always.** logtest holds no frequency
+  counter — that state lives in analysisd's pipeline, and 8 repeated failures
+  through a *single* logtest session never tripped a `frequency=5` rule on a
+  live 4.x manager. So `verified` is `null` (unknown, **not** `false`) and
+  `frequency_rule_unverifiable_via_logtest: true`. What logtest still proves
+  here is real: the parent fires (decoding + `if_matched_sid` wiring), and the
+  negatives stay silent (not over-matching).
 - negatives run in their own fresh session and must never fire the new id.
+- **rule 1002/1005 on a positive forces `inconclusive`** (`harness_suspect:
+  true`, `catch_all_hits: [...]`). The generic catch-all matches anything that
+  decoded but hit no specific rule, so the sample never reached the candidate's
+  match terms — the usual cause is a manager that was never restarted after the
+  upload. Filing that as an ordinary per-sample failure is how a working rule
+  gets deleted.
 
 ## Rule lifecycle (CRUD)
 

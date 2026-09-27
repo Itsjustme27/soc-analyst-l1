@@ -6,7 +6,7 @@ from tools.dashboard.dashboards import (
     UpdateWazuhDashboard,
     VerifyWazuhDashboard,
 )
-from tools.dashboard.engine import DesignDetectionDashboard
+from tools.dashboard.engine import DesignDetectionDashboard, DesignThreatIntelDashboard
 from tools.dashboard.visualizations import CreateWazuhVisualization, GetWazuhVisualizations
 
 TOOLS = [
@@ -18,6 +18,7 @@ TOOLS = [
     VerifyWazuhDashboard,
     DeleteWazuhDashboard,
     DesignDetectionDashboard,
+    DesignThreatIntelDashboard,
 ]
 
 __all__ = ["TOOLS"]

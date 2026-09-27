@@ -14,7 +14,11 @@ from tools.wazuh.decoders import (
     GetWazuhDecoders,
     ModifyWazuhDecoder,
 )
-from tools.wazuh.logtest import EndWazuhLogtestSession, RunWazuhLogtest
+from tools.wazuh.logtest import (
+    EndWazuhLogtestSession,
+    RunWazuhLogtest,
+    TestWazuhRule,
+)
 from tools.wazuh.rules import (
     CreateWazuhRule,
     DeleteWazuhRule,
@@ -41,6 +45,7 @@ TOOLS = [
     DisableWazuhAgent,
     GetWazuhConfiguration,
     RunWazuhLogtest,
+    TestWazuhRule,
     EndWazuhLogtestSession,
 ]
 

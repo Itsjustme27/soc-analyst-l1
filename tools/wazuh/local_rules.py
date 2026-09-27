@@ -38,12 +38,18 @@ def parse_file(text: str) -> ET.Element | None:
 
 def _indent(elem: ET.Element, level: int = 0) -> str:
     """Serialise an element with readable 2-space indentation (the Wazuh
-    convention)."""
+    convention).
+
+    Attributes are emitted on EVERY element, not just leaves. They carry the
+    rule's meaning - `id`, `level`, `frequency`, `timeframe` - so dropping them
+    while re-indenting an element that has children silently writes a different,
+    unusable rule to local_rules.xml.
+    """
     pad = "  " * level
+    attrs = "".join(f' {k}="{v}"' for k, v in elem.attrib.items())
     if len(elem) == 0:
-        attrs = "".join(f' {k}="{v}"' for k, v in elem.attrib.items())
         return f"{pad}<{elem.tag}{attrs}>{elem.text or ''}</{elem.tag}>"
-    lines = [f"{pad}<{elem.tag}>"]
+    lines = [f"{pad}<{elem.tag}{attrs}>"]
     for child in elem:
         lines.append(_indent(child, level + 1))
     lines.append(f"{pad}</{elem.tag}>")
@@ -160,7 +166,14 @@ def replace_rule(file_text: str, rule_id: str | int, rule_xml: str) -> tuple[str
 
 
 def _serialize_file(root: ET.Element) -> str:
-    return "\n".join(_indent(child, 0) for child in root) + "\n"
+    """Re-emit a whole parsed rules/decoder file, root element included.
+
+    The root is the wrapper the manager requires (`<group name="local,...">`
+    around every local rule, `<decoders>` around every local decoder). Dropping
+    it and emitting only the children would produce a file Wazuh refuses to
+    load - or worse, one that silently loads nothing.
+    """
+    return _indent(root, 0) + "\n"
 
 
 def unified_diff(old: str, new: str, filename: str = LOCAL_RULES_FILE, n: int = 4) -> str:
