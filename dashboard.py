@@ -34,6 +34,7 @@ import sys
 import time
 from dataclasses import asdict
 from pathlib import Path
+from typing import Any
 
 from flask import Flask, jsonify, render_template, request, send_file
 from werkzeug.exceptions import HTTPException
@@ -85,6 +86,21 @@ def _handle_unhandled_exception(exc: BaseException):
         return exc
     logger.exception("Unhandled exception in API request")
     return jsonify({"error": "Internal server error."}), 500
+
+
+def _write_triage_entry(entry: dict[str, Any]) -> None:
+    """Append one record to data/triage_log.jsonl.
+
+    Single writer for the on-demand triage route, so a success and a failure
+    produce the same shape. The failure path used to `continue` without writing
+    anything, which meant a run where every alert raised looked identical to a
+    clean run in the dashboard: total stayed put and the failures were only ever
+    in the HTTP response body.
+    """
+    path = _triage_log_path()
+    path.parent.mkdir(parents=True, exist_ok=True)
+    with open(path, "a") as f:
+        f.write(json.dumps(entry, default=str) + "\n")
 
 
 def _triage_log_path(path: str | Path | None = None) -> Path:
@@ -447,6 +463,32 @@ def api_triage(provider_id: str):
         try:
             result = agent.triage(alert)
         except Exception as e:  # noqa: BLE001
+            # Logged, not just returned. Previously this `continue`d and the
+            # failure vanished: nothing was written to the triage log, so the
+            # dashboard reported a clean run while alerts had gone untriaged.
+            # A raised triage is a pipeline failure and belongs in the same
+            # place the dashboard reads to tell one from a real verdict.
+            _write_triage_entry(
+                {
+                    "alert": alert,
+                    "result": {
+                        "verdict": None,
+                        "confidence": None,
+                        "recommended_action": None,
+                        "rationale": "",
+                        "evidence_used": [],
+                        "transcript": [],
+                        "verdict_error": _safe_error(e, "Triage failed for this alert."),
+                    },
+                    "rule_matches": [],
+                    "needs_human_review": True,
+                    "siem_provider": {
+                        "id": provider_id,
+                        "name": provider["name"],
+                        "platform": provider["platform"],
+                    },
+                }
+            )
             results.append(
                 {
                     "alert_id": alert.get("alert_id", "?"),
@@ -456,24 +498,19 @@ def api_triage(provider_id: str):
             )
             continue
         needs_human = needs_human_review(result, rule_matches)
-        with open(_triage_log_path(), "a") as f:
-            f.write(
-                json.dumps(
-                    {
-                        "alert": alert,
-                        "result": asdict(result),
-                        "rule_matches": rule_matches,
-                        "needs_human_review": needs_human,
-                        "siem_provider": {
-                            "id": provider_id,
-                            "name": provider["name"],
-                            "platform": provider["platform"],
-                        },
-                    },
-                    default=str,
-                )
-                + "\n"
-            )
+        _write_triage_entry(
+            {
+                "alert": alert,
+                "result": asdict(result),
+                "rule_matches": rule_matches,
+                "needs_human_review": needs_human,
+                "siem_provider": {
+                    "id": provider_id,
+                    "name": provider["name"],
+                    "platform": provider["platform"],
+                },
+            }
+        )
         results.append(
             {
                 "alert_id": alert.get("alert_id", "?"),

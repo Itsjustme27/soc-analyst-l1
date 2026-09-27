@@ -93,20 +93,66 @@ def _entry_ts(entry: dict[str, Any]) -> float | None:
         return None
 
 
-def compute_metrics(
+VALID_VERDICTS = ("true_positive", "false_positive", "escalate")
+
+# A verdict the pipeline could not produce. Kept as an explicit marker rather
+# than a default so it can never be mistaken for a category an analyst chose.
+FAILED_VERDICT = "failed"
+
+
+def classify_verdict(entry: dict[str, Any]) -> tuple[str | None, str]:
+    """(verdict, failure_reason) for one log entry.
+
+    `verdict` is None when the pipeline failed to produce a real one. The
+    reason is the recorded `verdict_error` when the producer captured one, else
+    a description of what was actually missing or wrong.
+
+    This exists because `"unknown"` used to be the fallback: `result.get(
+    "verdict", "unknown")` turned a missing verdict into a plausible-looking
+    category, so a pipeline failure rendered as "3 unknown" in the verdict mix
+    and read as a legitimate outcome. Worse, needs_human_review only escalates
+    on `verdict == "escalate"`, so an invalid verdict with high confidence
+    auto-closed. A failure is now a failure, loudly.
+    """
+    result = entry.get("result")
+    if not isinstance(result, dict):
+        return None, "entry has no result object"
+    recorded_error = result.get("verdict_error")
+    verdict = result.get("verdict")
+    if verdict in VALID_VERDICTS:
+        return verdict, ""
+    if recorded_error:
+        return None, str(recorded_error)
+    if verdict is None or verdict == "":
+        return None, "no verdict recorded"
+    return None, f"invalid verdict {verdict!r} (expected one of {', '.join(VALID_VERDICTS)})"
+
+
+def get_triage_stats(
     *,
     log_path: str | Path | None = None,
     feedback_path: str | Path | None = None,
     since_ts: float | None = None,
 ) -> dict[str, Any]:
-    """`since_ts`, when given, only includes entries with a real "ts" field
-    at or after that time - see this module's "period filtering" note (and
-    digest.py, which is the main caller that sets it). An entry with no
-    "ts" at all (today, that's every main.py/dashboard.py on-demand triage
-    entry - only run.py's watch-loop entries carry one) is EXCLUDED when
-    since_ts is set, on the theory that a periodic report shouldn't claim
-    an alert happened "this week" when it genuinely can't tell. Leave
-    since_ts unset (the default) to see everything regardless of timestamp.
+    """Read data/triage_log.jsonl ONCE and derive every dashboard figure from it.
+
+    Single source of truth by construction. Every widget - total triaged,
+    verdict mix, confidence distribution, verdicts by day, top triggered rules,
+    by-SIEM-provider - is a projection of the `entries` list parsed here, so no
+    two of them can disagree about how many alerts exist. The previous shape let
+    each consumer re-read and re-filter the file independently, which is how
+    "Total alerts triaged" and "Verdict mix" came to contradict each other.
+
+    Failed verdicts are counted in `total_alerts` (an alert WAS triaged; the
+    pipeline just failed to conclude) but are EXCLUDED from `verdict_totals`
+    and from every percentage, because a verdict mix reading "100% unknown" is a
+    pipeline failure, not a finding. They are reported on their own in
+    `failed_verdicts` with the reason for each.
+
+    `since_ts`, when given, only includes entries with a real "ts" field at or
+    after that time (see the note in compute_metrics). Entries with no "ts" are
+    excluded under a period filter, so a periodic report cannot claim an alert
+    happened "this week" when it genuinely cannot tell.
     """
     entries = _read_jsonl(_triage_log_path(log_path))
     if since_ts is not None:
@@ -121,15 +167,31 @@ def compute_metrics(
     rule_stats: dict[str, dict[str, int]] = defaultdict(
         lambda: {"triggered": 0, "true_positive": 0}
     )
+    failures: list[dict[str, Any]] = []
+    verdicted = 0
 
-    for e in entries:
+    for index, e in enumerate(entries):
         result = e.get("result") or {}
-        verdict = result.get("verdict", "unknown")
+        verdict, failure_reason = classify_verdict(e)
         confidence = result.get("confidence")
         needs_review = bool(e.get("needs_human_review"))
 
-        verdict_totals[verdict] += 1
-        verdict_by_day[_day_of(e)][verdict] += 1
+        if verdict is None:
+            # Counted as triaged, but never as a verdict. Carries the alert id
+            # so the dashboard callout can link straight to it.
+            failures.append(
+                {
+                    "index": index,
+                    "alert_id": (e.get("alert") or {}).get("alert_id") or f"entry {index}",
+                    "reason": failure_reason,
+                    "ts": e.get("ts") or _day_of(e),
+                }
+            )
+        else:
+            verdicted += 1
+            verdict_totals[verdict] += 1
+            verdict_by_day[_day_of(e)][verdict] += 1
+
         if isinstance(confidence, (int, float)):
             confidence_hist[_confidence_bucket(float(confidence))] += 1
         if needs_review:
@@ -172,9 +234,22 @@ def compute_metrics(
         }
 
     return {
+        # Every entry counts as triaged. `verdicted + failed == total` always.
         "total_alerts": total,
+        "verdicted": verdicted,
+        "failed_verdicts": {
+            "count": len(failures),
+            "rate": (len(failures) / total) if total else 0.0,
+            "entries": failures,
+        },
         "needs_human_review_rate": (needs_review_count / total) if total else 0.0,
+        # Real verdicts only. Never contains "unknown" or "failed".
         "verdict_totals": dict(verdict_totals),
+        # Percentages are over verdicted entries, so they always sum to 1.0 and
+        # can never be skewed by pipeline failures.
+        "verdict_mix_pct": {v: (n / verdicted) for v, n in verdict_totals.items()}
+        if verdicted
+        else {},
         "verdict_by_day": {day: dict(counts) for day, counts in sorted(verdict_by_day.items())},
         "confidence_distribution": {
             f"{lo:.1f}-{hi:.1f}": confidence_hist.get(f"{lo:.1f}-{hi:.1f}", 0)
@@ -206,6 +281,18 @@ def compute_metrics(
         ),
         "analyst_agreement": analyst_agreement,
     }
+
+
+def compute_metrics(
+    *,
+    log_path: str | Path | None = None,
+    feedback_path: str | Path | None = None,
+    since_ts: float | None = None,
+) -> dict[str, Any]:
+    """Aggregate stats over data/triage_log.jsonl. Thin wrapper over
+    get_triage_stats(), which is the single reader - kept as the public name
+    because dashboard.py, digest.py, rules.py and live_validation all call it."""
+    return get_triage_stats(log_path=log_path, feedback_path=feedback_path, since_ts=since_ts)
 
 
 if __name__ == "__main__":  # pragma: no cover - thin CLI wrapper

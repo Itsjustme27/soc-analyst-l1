@@ -24,6 +24,11 @@ import guard
 from config import cfg
 from connectors.siem import SIEMConnector, get_siem_connector
 from llm import get_provider
+
+# The verdict vocabulary lives in metrics because that is where the log is
+# aggregated, and the contract has to be identical on both sides. metrics
+# imports only config, so this stays a cheap, cycle-free dependency.
+from metrics import VALID_VERDICTS
 from rag.knowledge_base import KnowledgeBase
 
 if cfg.MOCK_MODE:
@@ -291,6 +296,12 @@ class TriageResult:
     rationale: str
     evidence_used: list[str]
     transcript: list[dict[str, Any]] = field(default_factory=list)
+    # Non-empty when the pipeline could not obtain a usable verdict, carrying
+    # the actual reason (invalid enum value, malformed response, exhausted
+    # budget). Serialised into every log entry by `asdict()`, which is what
+    # metrics.classify_verdict reads to report pipeline failures separately
+    # from real verdicts. Empty on a normal run.
+    verdict_error: str = ""
 
 
 def _retrieved_kinds(result: TriageResult) -> set[str]:
@@ -525,6 +536,27 @@ class TriageAgent:
                             }
                         )
                         continue
+                    # ENUM VALIDATION. The tool schema declares verdict as one of
+                    # three values, but nothing enforced it - `v["verdict"]` was
+                    # read blindly, so the model could emit "unknown" or any
+                    # other string and it was logged as if it were a real
+                    # conclusion. That mattered because needs_human_review
+                    # escalates only on `verdict == "escalate"`: an invalid
+                    # verdict with high confidence and close_no_action
+                    # AUTO-CLOSED the alert. An unusable verdict now fails safe
+                    # to escalate and records why, so the dashboard can report
+                    # it as a pipeline failure rather than a category.
+                    verdict_error = ""
+                    if verdict not in VALID_VERDICTS:
+                        verdict_error = (
+                            f"model returned verdict {verdict!r}, which is not one of "
+                            f"{', '.join(VALID_VERDICTS)}"
+                        )
+                        transcript.append({"verdict_error": verdict_error})
+                        verdict = "escalate"
+                        action = "escalate_to_l2"
+                        confidence = min(confidence, 0.5)
+                        rationale = f"{rationale} [pipeline: {verdict_error}; forced to escalate]"
                     return TriageResult(
                         verdict=verdict,
                         confidence=confidence,
@@ -532,6 +564,7 @@ class TriageAgent:
                         rationale=rationale,
                         evidence_used=evidence,
                         transcript=transcript,
+                        verdict_error=verdict_error,
                     )
                 try:
                     result = self._execute_tool(call.name, call_input)
@@ -556,6 +589,10 @@ class TriageAgent:
             messages.extend(tool_results)
 
         # Ran out of turns without a verdict - fail safe to escalate.
+        # `escalate` is a REAL verdict so this still counts in the verdict mix;
+        # verdict_error records that it was forced rather than chosen, which
+        # keeps the exhaustion visible in the log without inflating the
+        # "failed to get a verdict" count that means a broken pipeline.
         return TriageResult(
             verdict="escalate",
             confidence=0.0,
@@ -563,4 +600,5 @@ class TriageAgent:
             rationale="Agent did not reach a verdict within the tool-call budget - escalating for manual review.",
             evidence_used=[],
             transcript=transcript,
+            verdict_error="tool-call budget exhausted before submit_verdict",
         )

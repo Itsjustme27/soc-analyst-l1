@@ -222,6 +222,23 @@
     border: 1px solid var(--border-strong); border-radius: 999px;
     padding: 5px 11px; background: var(--panel2);
   }
+  .empty-act:hover { color: var(--text); border-color: rgba(var(--accent-rgb),.5); }
+  .empty-act:active { transform: translateY(1px); }
+  .empty b { display: block; }
+  .empty code { font-family: var(--mono); font-size: 11.5px; color: var(--text); }
+  /* The failed-verdict callout. Deliberately the only red-bordered card on the
+     page: a broken pipeline must be impossible to read past. */
+  .failed-list {
+    list-style: none; margin: 10px 0 0; padding: 0;
+    display: grid; gap: 5px; max-height: 190px; overflow: auto;
+  }
+  .failed-list li {
+    display: flex; gap: 10px; align-items: baseline;
+    font-size: 11.5px; color: var(--muted);
+    border-top: 1px solid var(--border); padding-top: 5px;
+  }
+  .failed-list li:first-child { border-top: 0; padding-top: 0; }
+  .failed-list code { color: var(--text); font-family: var(--mono); flex: 0 0 auto; }
 
   /* forms - label above input */
   .field { display: flex; flex-direction: column; gap: 5px; min-width: 180px; flex: 1; }
@@ -486,10 +503,12 @@
       <div class="chart-card">
         <h3>Verdicts by day</h3>
         <canvas id="chart-verdicts-by-day" height="190"></canvas>
+        <div id="verdicts-by-day-empty" style="display:none"></div>
       </div>
       <div class="chart-card">
         <h3>Confidence distribution</h3>
         <canvas id="chart-confidence" height="190"></canvas>
+        <div id="confidence-empty" style="display:none"></div>
       </div>
     </div>
 
@@ -504,8 +523,11 @@
       </div>
     </div>
 
+    <div id="failed-verdicts" style="display:none; margin-bottom:14px;"></div>
+
     <div class="section-label">Verdict mix</div>
     <div id="verdict-pills" class="actions" style="gap:8px;"></div>
+    <div id="agreement-pills" class="actions" style="gap:8px;margin-top:8px;"></div>
 
     <div class="section-label">Cases — alerts grouped by shared host / user</div>
     <div class="row" style="align-items:flex-end; margin-bottom:10px;">
@@ -1322,10 +1344,34 @@ function renderChatProviders() {
 /* ---------------- metrics ---------------- */
 let VERDICT_CHART = null;
 let CONFIDENCE_CHART = null;
-const VERDICT_COLORS = { true_positive: "#d97968", false_positive: "#58ae80", escalate: "#d8a15b", unknown: "#9a938a" };
+const VERDICT_COLORS = { true_positive: "#d97968", false_positive: "#58ae80", escalate: "#d8a15b" };
 
 function pill(label, value) {
   return `<span class="pill"><b>${esc(value)}</b> ${esc(label)}</span>`;
+}
+
+/* An empty chart canvas renders as a blank box, which reads as "loaded, and
+   the answer is nothing" rather than "you have not run this yet". Every chart
+   card gets a specific, actionable message naming the command that fills it. */
+function emptyState(title, body, actionLabel, actionAttr) {
+  return `<div class="empty">
+      <b style="color:var(--muted);font-weight:600">${esc(title)}</b>
+      <span>${esc(body)}</span>
+      ${actionLabel ? `<span class="empty-act" ${actionAttr || ""}>${esc(actionLabel)}</span>` : ""}
+    </div>`;
+}
+
+const NO_DATA_HINT =
+  "Run <code>python main.py demo</code>, or start the Overnight Watcher, to record verdicts here.";
+
+function hideChart(id) {
+  const c = $(id);
+  if (c) c.style.display = "none";
+}
+
+function showChart(id) {
+  const c = $(id);
+  if (c) c.style.display = "";
 }
 
 async function loadMetrics() {
@@ -1342,26 +1388,86 @@ async function loadMetrics() {
 }
 
 function renderMetricsSummary(m) {
+  // One number, from one place. `m.total_alerts` is the same value the failed
+  // callout and the verdict mix are derived from, so they cannot disagree.
   $("m-total").textContent = m.total_alerts;
   $("m-review").innerHTML = `${(m.needs_human_review_rate * 100).toFixed(0)}<small>%</small>`;
   const aa = m.analyst_agreement;
   $("m-agree").innerHTML = aa ? `${(aa.agreement_rate * 100).toFixed(0)}<small>%</small>` : "–";
-  const pills = [];
-  for (const [verdict, count] of Object.entries(m.verdict_totals || {})) {
-    pills.push(pill(verdict, count));
-  }
+
+  renderFailedVerdictCallout(m);
+  renderVerdictMix(m);
   if (aa) {
+    const pills = [];
     for (const [name, s] of Object.entries(aa.by_analyst || {})) {
       pills.push(pill(name, `${(s.agreement_rate * 100).toFixed(0)}% (${s.reviewed})`));
     }
+    $("agreement-pills").innerHTML = pills.join("");
+  } else {
+    $("agreement-pills").innerHTML = "";
   }
-  $("verdict-pills").innerHTML = pills.join("");
+}
+
+/* A broken triage pipeline used to render as "3 unknown" in the verdict mix -
+   indistinguishable from a real analytical result. These are counted and
+   excluded from the mix precisely so they can be shown here instead. */
+function renderFailedVerdictCallout(m) {
+  const box = $("failed-verdicts");
+  const f = m.failed_verdicts;
+  if (!f || !f.count) { box.innerHTML = ""; box.style.display = "none"; return; }
+  box.style.display = "";
+  const pct = (f.rate * 100).toFixed(1);
+  const rows = (f.entries || []).slice(0, 25).map(e =>
+    `<li><code>${esc(e.alert_id)}</code><span>${esc(e.reason)}</span></li>`).join("");
+  box.innerHTML =
+    `<div class="card" style="border-color:var(--red);background:var(--red-soft)">
+       <div style="display:flex;align-items:center;gap:9px;flex-wrap:wrap">
+         <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="var(--red)" stroke-width="2" stroke-linecap="round"><path d="M12 9v4"/><path d="M12 17h.01"/><path d="M10.29 3.86 1.82 18a2 2 0 0 0 1.71 3h16.94a2 2 0 0 0 1.71-3L13.71 3.86a2 2 0 0 0-3.42 0z"/></svg>
+         <b style="color:var(--red)">${esc(f.count)} alert${f.count === 1 ? "" : "s"} failed to get a verdict</b>
+         <span class="muted" style="font-size:11.5px">${esc(pct)}% of ${esc(m.total_alerts)} triaged - these are excluded from the verdict mix</span>
+       </div>
+       <ul class="failed-list">${rows}</ul>
+     </div>`;
+}
+
+/* Percentages are over verdicted entries only, so they always sum to 100% and
+   a failure can never be laundered into looking like an outcome. */
+function renderVerdictMix(m) {
+  const totals = m.verdict_totals || {};
+  const keys = Object.keys(totals);
+  const box = $("verdict-pills");
+  if (!keys.length) {
+    box.innerHTML = emptyState(
+      "No verdicts recorded yet",
+      "Alerts have been triaged but none produced a usable verdict. Check the failure callout above."
+    );
+    return;
+  }
+  const pct = m.verdict_mix_pct || {};
+  const pills = keys.sort().map(v => {
+    const p = pct[v] != null ? ` (${(pct[v] * 100).toFixed(0)}%)` : "";
+    return pill(v, totals[v] + p);
+  });
+  const failed = (m.failed_verdicts || {}).count || 0;
+  if (failed) pills.push(`<span class="pill" style="color:var(--red);border-color:var(--red)"><b>${failed}</b> failed (excluded)</span>`);
+  box.innerHTML = pills.join("");
 }
 
 function renderVerdictsByDayChart(byDay) {
   const canvas = $("chart-verdicts-by-day");
   if (VERDICT_CHART) VERDICT_CHART.destroy();
+  VERDICT_CHART = null;
   const days = Object.keys(byDay || {}).sort();
+  if (!days.length) {
+    hideChart("chart-verdicts-by-day");
+    $("verdicts-by-day-empty").style.display = "";
+    $("verdicts-by-day-empty").innerHTML = emptyState(
+      "No verdicts to plot yet", NO_DATA_HINT,
+      "Open the Watcher", 'onclick="showView(\'watcher\')" style="cursor:pointer"');
+    return;
+  }
+  $("verdicts-by-day-empty").style.display = "none";
+  showChart("chart-verdicts-by-day");
   const verdicts = [...new Set(days.flatMap(d => Object.keys(byDay[d])))];
   const datasets = verdicts.map(v => ({
     label: v,
@@ -1388,9 +1494,23 @@ function renderVerdictsByDayChart(byDay) {
 function renderConfidenceChart(dist) {
   const canvas = $("chart-confidence");
   if (CONFIDENCE_CHART) CONFIDENCE_CHART.destroy();
+  CONFIDENCE_CHART = null;
   const labels = Object.keys(dist || {});
   const values = Object.values(dist || {});
-  if (!labels.length || typeof Chart === "undefined") return;
+  // `compute_metrics` always returns every bucket, so a full set of zeros is
+  // what "nothing triaged" looks like - not an empty object.
+  const allZero = !values.length || values.every(v => !v);
+  if (allZero) {
+    hideChart("chart-confidence");
+    $("confidence-empty").style.display = "";
+    $("confidence-empty").innerHTML = emptyState(
+      "No confidence scores yet",
+      "Confidence is recorded per alert at triage time. " + NO_DATA_HINT);
+    return;
+  }
+  $("confidence-empty").style.display = "none";
+  showChart("chart-confidence");
+  if (typeof Chart === "undefined") return;
   CONFIDENCE_CHART = new Chart(canvas, {
     type: "bar",
     data: { labels, datasets: [{ label: "alerts", data: values, backgroundColor: "rgba(88,174,128,.72)", borderRadius: 3 }] },
@@ -1409,7 +1529,10 @@ function renderConfidenceChart(dist) {
 function renderRulesTable(topRules) {
   const el = $("metrics-rules-table");
   if (!topRules || !topRules.length) {
-    el.innerHTML = '<div class="empty">No rule matches logged yet.</div>';
+    el.innerHTML = emptyState(
+      "No triggered rules recorded",
+      "This counts rules that actually fired during triage, so it stays empty until an alert matches one.",
+      "Open the Rule Builder", 'onclick="showView(\'rule-builder\')" style="cursor:pointer"');
     return;
   }
   const rows = topRules.map(r => `
@@ -1426,7 +1549,10 @@ function renderProviderTable(byProvider) {
   const el = $("metrics-provider-table");
   const names = Object.keys(byProvider || {});
   if (!names.length) {
-    el.innerHTML = '<div class="empty">No triaged alerts logged yet.</div>';
+    el.innerHTML = emptyState(
+      "No alerts triaged yet",
+      NO_DATA_HINT,
+      "Open the Watcher", 'onclick="showView(\'watcher\')" style="cursor:pointer"');
     return;
   }
   const rows = names.map(name => {
