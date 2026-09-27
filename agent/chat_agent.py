@@ -27,6 +27,7 @@ from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any
 
+import guard
 import lookup_tables as lookup
 from config import cfg
 from connectors.siem import SIEMConnector
@@ -44,6 +45,11 @@ from siem_providers import (
 from siem_providers import (
     remove_provider as store_remove_provider,
 )
+
+# Shared with the SOC engineer and the triage analyst, so all three get the
+# same audit logging, the same honest "no results" note, and the same
+# untrusted-data handling instead of three divergent copies.
+from tools.osint.web_search import web_search
 
 MAX_TOOL_TURNS = cfg.LLM_MAX_TOOL_TURNS
 
@@ -517,7 +523,12 @@ class ChatAgent:
                     {
                         "role": "tool",
                         "tool_call_id": tc.id,
-                        "content": json.dumps(result, default=str),
+                        # Wrapped as untrusted DATA, like the engineer and the
+                        # analyst loops. This loop was the one that was not:
+                        # get_alerts returns SIEM documents (full_log included)
+                        # and web_search returns arbitrary internet text, and
+                        # both went to the model as bare JSON.
+                        "content": guard.wrap_tool_output(guard.limit_result_size(result)),
                     }
                 )
             messages.extend(tool_results)
@@ -530,92 +541,3 @@ class ChatAgent:
 
 # --------------------------------------------------------------------------- #
 # Web search (OSINT) - graceful fallback chain, no hard dependency.
-def _ddg_instant(query: str) -> list[dict[str, Any]]:
-    import requests
-
-    url = "https://api.duckduckgo.com/"
-    params = {"q": query, "format": "json", "no_html": 1, "skip_disambig": 1}
-    try:
-        r = requests.get(url, params=params, timeout=8)
-        r.raise_for_status()
-    except Exception:  # noqa: BLE001 - offline / blocked -> fall through
-        return []
-    data = r.json()
-    out = []
-    if data.get("AbstractText"):
-        out.append(
-            {
-                "title": "Instant answer",
-                "snippet": data["AbstractText"],
-                "url": data.get("AbstractURL", ""),
-            }
-        )
-    for t in data.get("RelatedTopics") or []:
-        if isinstance(t, dict) and t.get("Text"):
-            out.append(
-                {
-                    "title": t.get("Text", "")[:80],
-                    "snippet": t.get("Text", ""),
-                    "url": t.get("FirstURL", ""),
-                }
-            )
-        elif isinstance(t, dict) and t.get("Topics"):
-            for s in t["Topics"]:
-                if s.get("Text"):
-                    out.append(
-                        {
-                            "title": s.get("Text", "")[:80],
-                            "snippet": s.get("Text", ""),
-                            "url": s.get("FirstURL", ""),
-                        }
-                    )
-    return out[:10]
-
-
-def _searxng(query: str) -> list[dict[str, Any]]:
-    import requests
-
-    base = cfg.SEARXNG_URL.rstrip("/")
-    if not base:
-        return []
-    try:
-        r = requests.get(
-            f"{base}/search",
-            params={"q": query, "format": "json"},
-            headers={"User-Agent": "soc-triage-agent/1.0"},
-            timeout=8,
-        )
-        r.raise_for_status()
-    except Exception:  # noqa: BLE001 - searxng down -> fall through
-        return []
-    results = r.json().get("results") or []
-    return [
-        {
-            "title": (x.get("title") or "")[:120],
-            "snippet": (x.get("content") or "")[:300],
-            "url": x.get("url", ""),
-        }
-        for x in results[:8]
-    ]
-
-
-def web_search(query: str) -> dict[str, Any]:
-    """OSINT web search. DuckDuckGo instant-answer first; SearXNG when configured."""
-    if not cfg.WEB_SEARCH_ENABLED:
-        return {
-            "enabled": False,
-            "note": "Web search is disabled (WEB_SEARCH_ENABLED=false).",
-            "results": [],
-        }
-    results = _ddg_instant(query)
-    backend = "duckduckgo"
-    if not results:
-        results = _searxng(query)
-        backend = "searxng"
-    return {
-        "enabled": True,
-        "backend": backend,
-        "query": query,
-        "count": len(results),
-        "results": results,
-    }

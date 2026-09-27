@@ -116,9 +116,17 @@ class Config:
 
     # --- Web search (OSINT enrichment, no API key) ---
     # OFF by default so triage never blocks on an external lookup. When on,
-    # the chat agent can enrich alerts via SearXNG (or DuckDuckGo fallback).
+    # the chat agent, the SOC engineer and the triage analyst can enrich via
+    # SearXNG (or DuckDuckGo instant answers as a keyless fallback - note that
+    # endpoint is a disambiguation database, NOT a web search, so configure
+    # SEARXNG_URL for real coverage).
     WEB_SEARCH_ENABLED = _bool("WEB_SEARCH_ENABLED", False)
     SEARXNG_URL = os.getenv("SEARXNG_URL", "")
+    # Every query is logged: the query string leaves the building, and the
+    # analyst runs unattended, so an injected instruction could otherwise cause
+    # internal hostnames or indicators to be sent to a third party with no
+    # record of it.
+    WEB_QUERY_LOG_PATH = os.getenv("WEB_QUERY_LOG_PATH", "data/web_queries.jsonl")
 
     # --- Outbound notifications (rules.py action.notify) ---
     # Generic webhook (Slack/Teams-compatible {"text": "..."} payload, or any
