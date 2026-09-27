@@ -429,5 +429,34 @@ class TestCliTerminalOps(unittest.TestCase):
         wazuh.get_manager_status.assert_called_once()
 
 
+class TestCliFindToolsRender(unittest.TestCase):
+    """Regression for scripts_engineer_cli.py:410: the find_tools event line
+    used a \\u2026 escape inside an f-string *expression* part, which is a
+    SyntaxError on Python 3.11 (only legal from 3.12+, PEP 701). The literal
+    now lives outside the expression; these tests pin the rendered output."""
+
+    def _render(self, found: list[str]) -> str:
+        cli = cli_mod.EngineerCLI.__new__(cli_mod.EngineerCLI)
+        cli.json_mode = False
+        buf = io.StringIO()
+        with redirect_stdout(buf):
+            cli._on_event("find_tools", {"query": "ssh brute force", "found": found})
+        return buf.getvalue()
+
+    def test_fewer_than_seven_results_no_ellipsis(self):
+        out = self._render(["a", "b", "c"])
+        self.assertTrue(out.endswith("a, b, c\n"), out)
+        self.assertNotIn("\u2026", out)
+
+    def test_empty_results_render_nothing(self):
+        out = self._render([])
+        self.assertTrue(out.endswith("nothing\n"), out)
+        self.assertNotIn("\u2026", out)
+
+    def test_more_than_six_results_truncate_with_ellipsis(self):
+        out = self._render(["a", "b", "c", "d", "e", "f", "g"])
+        self.assertTrue(out.endswith("a, b, c, d, e, f \u2026\n"), out)
+
+
 if __name__ == "__main__":
     unittest.main()

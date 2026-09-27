@@ -405,9 +405,12 @@ class EngineerCLI:
             )
         elif base == "find_tools":
             found = data.get("found") or []
+            # the ellipsis literal lives outside the f-string expression so it
+            # stays legal on Python 3.11 (expressions cannot contain backslashes)
+            ellipsis = " \u2026"
             print(
                 f"{indent}\u2315 {who}find_tools({data.get('query')!r}) \u2192 "
-                f"{', '.join(found[:6]) or 'nothing'}{' \u2026' if len(found) > 6 else ''}",
+                f"{', '.join(found[:6]) or 'nothing'}{ellipsis if len(found) > 6 else ''}",
                 flush=True,
             )
         elif base == "mcp_call":

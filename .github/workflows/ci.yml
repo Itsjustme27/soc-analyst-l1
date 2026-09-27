@@ -36,6 +36,9 @@ jobs:
       - name: Lint (ruff)
         run: ruff check --output-format concise agent cli connectors llm rag tools approvals.py approval_executor.py audit.py config.py dashboard.py permissions.py rules.py siem_providers.py agent_control.py main.py run.py *.py scripts_*.py
 
+      - name: Python 3.11 syntax compatibility (f-string gate)
+        run: python scripts/check_py311_syntax.py
+
       - name: Security scan (bandit, medium+)
         run: bandit -q -lll -r agent cli connectors llm rag tools dashboard.py approvals.py permissions.py approval_executor.py audit.py config.py
 
