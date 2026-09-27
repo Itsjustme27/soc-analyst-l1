@@ -91,6 +91,38 @@ class ExceptionExposureBoundary(unittest.TestCase):
         self.assertEqual(body["results"][0]["error"], "Triage failed for this alert.")
         _assert_no_traceback_leak(self, r.get_data(as_text=True))
 
+    def test_agent_start_400_is_generic_not_the_value_error_message(self):
+        """The fail-closed start rejection must only ever echo the stable
+        message - never the ValueError repr, class name, file paths, or the
+        offending (smuggled) user string."""
+        with self.subTest(route="legacy /api/agent/start"):
+            r = self.client.post(
+                "/api/agent/start", json={"provider_id": "wazuh; id > /etc/hosts"}
+            )
+            self.assertEqual(r.status_code, 400)
+            self.assertEqual(
+                r.get_json()["error"],
+                "Could not start the watcher: unknown SIEM/pipeline.",
+            )
+            raw = r.get_data(as_text=True)
+            self.assertNotIn("ValueError", raw)
+            self.assertNotIn("wazuh;", raw)  # user payload must not be echoed
+            _assert_no_traceback_leak(self, raw)
+        with self.subTest(route="named /api/agents/start"):
+            r = self.client.post(
+                "/api/agents/start",
+                json={"agent_id": "w1", "provider_id": "wazuh; id > /etc/hosts"},
+            )
+            self.assertEqual(r.status_code, 400)
+            self.assertEqual(
+                r.get_json()["error"],
+                "Could not start the watcher: unknown SIEM/pipeline.",
+            )
+            raw = r.get_data(as_text=True)
+            self.assertNotIn("ValueError", raw)
+            self.assertNotIn("wazuh;", raw)
+            _assert_no_traceback_leak(self, raw)
+
 
 if __name__ == "__main__":
     unittest.main()

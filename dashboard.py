@@ -943,7 +943,10 @@ def api_agent_start():
             execution_status="failure",
             error=str(e),
         )
-        return jsonify({"error": str(e)}), 400
+        return (
+            jsonify({"error": _safe_error(e, "Could not start the watcher: unknown SIEM/pipeline.")}),
+            400,
+        )
     _audit_write("agent_start", {"agent_id": "default", "provider_id": provider_id}, {"pid": pid})
     return jsonify({"ok": True, "pid": pid})
 
@@ -995,7 +998,10 @@ def api_agents_start():
             execution_status="failure",
             error=str(e),
         )
-        return jsonify({"error": str(e)}), 400
+        return (
+            jsonify({"error": _safe_error(e, "Could not start the watcher: unknown SIEM/pipeline.")}),
+            400,
+        )
     _audit_write("agent_start", {"agent_id": agent_id, "provider_id": provider_id}, {"pid": pid})
     return jsonify({"ok": True, "agent_id": agent_id, "pid": pid})
 
