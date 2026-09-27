@@ -36,6 +36,7 @@ from __future__ import annotations
 import asyncio
 import contextlib
 import json
+import logging
 import os
 import re
 import threading
@@ -62,7 +63,13 @@ def mcp_available() -> bool:
 
 def _expand(value: Any) -> Any:
     if isinstance(value, str):
-        return _ENV_RE.sub(lambda m: os.environ.get(m.group(1), ""), value)
+        def _repl(m: re.Match[str]) -> str:
+            name = m.group(1)
+            if name not in os.environ:
+                logging.getLogger(__name__).warning(
+                    "MCP config references ${%s} which is not set - substituting ''", name)
+            return os.environ.get(name, "")
+        return _ENV_RE.sub(_repl, value)
     if isinstance(value, list):
         return [_expand(v) for v in value]
     if isinstance(value, dict):
