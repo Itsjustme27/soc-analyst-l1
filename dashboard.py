@@ -24,6 +24,7 @@ from __future__ import annotations
 
 import hmac
 import json
+import logging
 import os
 import signal
 import subprocess
@@ -33,6 +34,7 @@ from dataclasses import asdict
 from pathlib import Path
 
 from flask import Flask, jsonify, render_template, request
+from werkzeug.exceptions import HTTPException
 
 import agent_control as ac
 import siem_providers as store
@@ -53,7 +55,34 @@ import rules
 
 app = Flask(__name__)
 
+logger = logging.getLogger("dashboard")
+
 TRIAGE_LIMIT_DEFAULT = 5
+
+
+def _safe_error(exc: BaseException, message: str) -> str:
+    """Return a stable, generic message instead of exception internals.
+
+    The full exception (type, message, traceback) is logged server-side only;
+    the API client never sees file paths, line numbers or exception class
+    names. Used at the API boundary when an unexpected exception is caught.
+    """
+    logger.exception("%s (%s): %r", message, type(exc).__name__, exc)
+    return message
+
+
+@app.errorhandler(Exception)
+def _handle_unhandled_exception(exc: BaseException):
+    """API boundary: unexpected exceptions must never leak a stack trace.
+
+    Returns a generic JSON 500 - the full traceback goes to the server log
+    only. Standard HTTP errors (404, 405, ...) pass through unchanged so
+    Flask still renders their normal responses.
+    """
+    if isinstance(exc, HTTPException):
+        return exc
+    logger.exception("Unhandled exception in API request")
+    return jsonify({"error": "Internal server error."}), 500
 
 
 def _triage_log_path(path: str | Path | None = None) -> Path:
@@ -249,8 +278,8 @@ def _connector_or_error(provider_id: str):
         return None, (jsonify({"error": f"Provider '{provider_id}' not found."}), 404), None
     try:
         conn = store.connector_for(provider)
-    except Exception as e:  # noqa: BLE001 - surface config errors to the UI
-        return None, (jsonify({"error": f"Could not build connector: {e}"}), 400), None
+    except Exception as e:  # noqa: BLE001
+        return None, (jsonify({"error": _safe_error(e, "Could not build connector.")}), 400), None
     return conn, None, provider
 
 
@@ -355,7 +384,7 @@ def api_alerts(provider_id: str):
     try:
         alerts = conn.get_new_alerts()
     except Exception as e:  # noqa: BLE001
-        return jsonify({"error": f"Failed to pull alerts: {e}"}), 502
+        return jsonify({"error": _safe_error(e, "Failed to pull alerts.")}), 502
     return jsonify(
         {
             "provider_id": provider_id,
@@ -378,7 +407,7 @@ def api_triage(provider_id: str):
     try:
         alerts = conn.get_new_alerts()
     except Exception as e:  # noqa: BLE001
-        return jsonify({"error": f"Failed to pull alerts: {e}"}), 502
+        return jsonify({"error": _safe_error(e, "Failed to pull alerts.")}), 502
     if not alerts:
         return jsonify(
             {"provider_id": provider_id, "triaged": 0, "results": [], "note": "No new alerts."}
@@ -387,7 +416,7 @@ def api_triage(provider_id: str):
     try:
         agent = TriageAgent(siem=conn)
     except Exception as e:  # noqa: BLE001 - e.g. missing LLM key
-        return jsonify({"error": f"Could not start the triage agent: {e}"}), 400
+        return jsonify({"error": _safe_error(e, "Could not start the triage agent.")}), 400
 
     _triage_log_path().parent.mkdir(parents=True, exist_ok=True)
     results = []
@@ -410,7 +439,7 @@ def api_triage(provider_id: str):
                 {
                     "alert_id": alert.get("alert_id", "?"),
                     "rule_id": alert.get("rule_id"),
-                    "error": str(e),
+                    "error": _safe_error(e, "Triage failed for this alert."),
                 }
             )
             continue
@@ -483,7 +512,7 @@ def api_chat():
     try:
         agent = ChatAgent(siem=siem, provider_id=provider_id or None)
     except Exception as e:  # noqa: BLE001
-        return jsonify({"error": f"Could not start the chat agent: {e}"}), 400
+        return jsonify({"error": _safe_error(e, "Could not start the chat agent.")}), 400
 
     try:
         result = agent.chat(user_message=message, history=history or [])
@@ -608,7 +637,7 @@ def api_upsert_lookup_entry(name: str, key: str):
             execution_status="failure",
             error=str(e),
         )
-        return jsonify({"error": str(e)}), 400
+        return jsonify({"error": _safe_error(e, "Could not update lookup entry.")}), 400
     _audit_write(
         "lookup_entry_upsert",
         {"name": name, "key": key, "value": value},
