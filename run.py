@@ -25,6 +25,11 @@ Run modes
                                   # state/logs live under data/agents/<id>/)
     python run.py --provider mock # force the mock LLM (offline dev/CI)
 
+The dashboard spawns watchers with a fully static argv and delivers the
+selector/identity via the process environment instead (SOC_WATCHER_SIEM,
+SOC_WATCHER_AGENT_ID) - env wins over the CLI flags above, which remain for
+direct/manual invocations.
+
 Clean shutdown is honoured three ways - all exit 0 so the dashboard/CI sees a
 clean stop:
   1. SIGINT / SIGTERM (Ctrl+C, `kill <pid>`, dashboard "stop" button).
@@ -296,15 +301,23 @@ def main() -> int:  # pragma: no cover - thin argparse wrapper
     )
     args = parser.parse_args()
 
+    # Watchers spawned by the dashboard receive their identity and SIEM
+    # selector in the process environment: the dashboard keeps its argv
+    # fully static (no user-controlled string may influence the command
+    # line), so a spawned watcher finds its params in SOC_WATCHER_* here.
+    # Direct invocations still pass --agent-id/--siem flags; env wins when
+    # both are present.
     global AGENT_ID
-    AGENT_ID = ac.sanitize_id(args.agent_id)
+    agent_id = os.environ.get("SOC_WATCHER_AGENT_ID") or args.agent_id
+    AGENT_ID = ac.sanitize_id(agent_id)
 
     if args.provider:
         get_provider(args.provider)  # validate/instantiate early so a bad key fails fast
 
     siem = None
-    if args.siem:
-        sig = args.siem
+    siem_sel = os.environ.get("SOC_WATCHER_SIEM") or args.siem
+    if siem_sel:
+        sig = siem_sel
         match = next((p for p in load_providers() if str(p.get("id")) == sig), None)
         if match is None:
             # allow a bare platform name (wazuh/mock/...) -> use env creds

@@ -197,8 +197,11 @@ class TestDashboardAgentEndpoints(AgentControlTestBase):
         args, kwargs = popen.call_args
         cmd = args[0]
         self.assertTrue(any(c.endswith("run.py") for c in cmd), cmd)
-        self.assertEqual(cmd[cmd.index("--agent-id") + 1], "sq-1")
-        self.assertEqual(cmd[cmd.index("--siem") + 1], "wazuh")
+        # the command line is fully static: identity+selector ride in env
+        self.assertNotIn("--agent-id", cmd)
+        self.assertNotIn("--siem", cmd)
+        self.assertEqual(kwargs["env"]["SOC_WATCHER_AGENT_ID"], "sq-1")
+        self.assertEqual(kwargs["env"]["SOC_WATCHER_SIEM"], "wazuh")
         # output must be captured to the agent's run.log, never DEVNULL
         self.assertEqual(kwargs["stderr"], subprocess.STDOUT)
         self.assertIsNotNone(kwargs["stdout"])

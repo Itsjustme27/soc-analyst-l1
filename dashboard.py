@@ -844,10 +844,14 @@ def _siem_selectors() -> set[str]:
 def _spawn_agent(agent_id: str, provider_id: str | None = None) -> int:
     """Start a run.py watcher for `agent_id`, capturing its output to run.log."""
     # Fail-closed (CodeQL: "Uncontrolled command line"): a user-supplied
-    # --siem must resolve against the allowlist before it may enter the
-    # command line; anything else is rejected outright, never sanitized or
+    # --siem selector must resolve against the allowlist before it is
+    # accepted; anything else is rejected outright, never sanitized or
     # escaped. The agent id is independently confined to a safe charset by
-    # ac.sanitize_id() before it is used in argv or on the filesystem.
+    # ac.sanitize_id(). Critically, *neither value ever reaches the command
+    # line*: argv is a fixed, fully-static list, so no external user can
+    # influence how the subprocess is spawned, not even by argument
+    # smuggling. The already-validated selector and agent id travel to the
+    # watcher in its process environment instead, which run.py reads on boot.
     if provider_id is not None and provider_id not in _siem_selectors():
         raise ValueError(f"Unknown SIEM/pipeline '{provider_id}'.")
     agent_id = ac.sanitize_id(agent_id)
@@ -858,12 +862,15 @@ def _spawn_agent(agent_id: str, provider_id: str | None = None) -> int:
     log_path = ac.log_file_path(agent_id)
     log_path.parent.mkdir(parents=True, exist_ok=True)
     log_fh = open(log_path, "ab")
-    cmd = [sys.executable, str(Path(__file__).parent / "run.py"), "--agent-id", agent_id]
+    cmd = [sys.executable, str(Path(__file__).parent / "run.py")]
+    env = dict(os.environ)
+    env["SOC_WATCHER_AGENT_ID"] = agent_id
     if provider_id:
-        cmd += ["--siem", provider_id]
+        env["SOC_WATCHER_SIEM"] = provider_id
     try:
         proc = subprocess.Popen(
             cmd,
+            env=env,
             stdout=log_fh,
             stderr=subprocess.STDOUT,
             start_new_session=True,
