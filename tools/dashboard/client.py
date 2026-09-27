@@ -15,6 +15,7 @@ creds -> admin/admin) so a stale credential pair never bricks deployment.
 Credentials are never logged; only the username that authenticated is
 returned in debug info.
 """
+
 from __future__ import annotations
 
 import threading
@@ -90,8 +91,14 @@ def _ensure_session() -> None:
                 _login()
 
 
-def dashboards_request(method: str, path: str, *, params: dict[str, Any] | None = None,
-                       body: Any = None, timeout: float | None = None) -> dict[str, Any]:
+def dashboards_request(
+    method: str,
+    path: str,
+    *,
+    params: dict[str, Any] | None = None,
+    body: Any = None,
+    timeout: float | None = None,
+) -> dict[str, Any]:
     """Authenticated saved-objects request against the Wazuh dashboard.
 
     Returns the 2xx JSON payload or raises ToolError. Re-logins once after a
@@ -103,8 +110,13 @@ def dashboards_request(method: str, path: str, *, params: dict[str, Any] | None 
     for attempt in range(2):
         try:
             r = _SESSION.request(
-                method, f"{url}{path}", params=params, json=body,
-                headers=headers, verify=cfg.WAZUH_DASHBOARD_VERIFY_SSL, timeout=timeout,
+                method,
+                f"{url}{path}",
+                params=params,
+                json=body,
+                headers=headers,
+                verify=cfg.WAZUH_DASHBOARD_VERIFY_SSL,
+                timeout=timeout,
             )
         except requests.RequestException as e:
             raise ToolError(f"OpenSearch Dashboards unreachable ({url}): {e}") from e

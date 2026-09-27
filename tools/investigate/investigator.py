@@ -14,6 +14,7 @@ Everything is data-driven from the indexer (wazuh-alerts-* / wazuh-archives-*)
 via typed OpenSearch aggregations - no LLM guessing about counts. The agent
 calls these as tools and narrates the evidence it actually got back.
 """
+
 from __future__ import annotations
 
 import time
@@ -29,18 +30,29 @@ def _range_clause(time_range: str | None) -> dict[str, Any]:
 
 
 # --------------------------------------------------------------------------- #
-def top_attacking_ips(indexer: Any, *, group: str = "web", time_range: str = "-24h",
-                      size: int = 10, fallback_groups: tuple[str, ...] = ("web", "attack")) -> dict[str, Any]:
+def top_attacking_ips(
+    indexer: Any,
+    *,
+    group: str = "web",
+    time_range: str = "-24h",
+    size: int = 10,
+    fallback_groups: tuple[str, ...] = ("web", "attack"),
+) -> dict[str, Any]:
     """Rank source IPs by alert volume, optionally restricted to a rule group
     (e.g. 'web' / 'attack'). Returns per-IP: alert count, rule groups, top
     rules, max level, first/last seen, affected agents."""
+
     def run_for(g: str) -> dict[str, Any]:
         body = {
             "size": 0,
-            "query": {"bool": {"filter": [
-                _range_clause(time_range),
-                {"term": {"rule.groups": g}},
-            ]}},
+            "query": {
+                "bool": {
+                    "filter": [
+                        _range_clause(time_range),
+                        {"term": {"rule.groups": g}},
+                    ]
+                }
+            },
             "aggs": {
                 "top_src": {
                     "terms": {"field": "data.srcip", "size": size},
@@ -57,19 +69,25 @@ def top_attacking_ips(indexer: Any, *, group: str = "web", time_range: str = "-2
         }
         resp = indexer.search("wazuh-alerts-*", body)
         buckets = (resp.get("aggregations") or {}).get("top_src", {}).get("buckets", [])
-        return [{
-            "src_ip": b.get("key"),
-            "alert_count": b.get("doc_count", 0),
-            "max_level": (b.get("max_level") or {}).get("value"),
-            "first_seen": (b.get("first_seen") or {}).get("value_as_string"),
-            "last_seen": (b.get("last_seen") or {}).get("value_as_string"),
-            "rule_groups": [x.get("key") for x in (b.get("groups") or {}).get("buckets", [])],
-            "top_rules": [{
-                "id": x.get("key"),
-                "hits": x.get("doc_count", 0),
-            } for x in (b.get("rules") or {}).get("buckets", [])],
-            "agents": [x.get("key") for x in (b.get("agents") or {}).get("buckets", [])],
-        } for b in buckets]
+        return [
+            {
+                "src_ip": b.get("key"),
+                "alert_count": b.get("doc_count", 0),
+                "max_level": (b.get("max_level") or {}).get("value"),
+                "first_seen": (b.get("first_seen") or {}).get("value_as_string"),
+                "last_seen": (b.get("last_seen") or {}).get("value_as_string"),
+                "rule_groups": [x.get("key") for x in (b.get("groups") or {}).get("buckets", [])],
+                "top_rules": [
+                    {
+                        "id": x.get("key"),
+                        "hits": x.get("doc_count", 0),
+                    }
+                    for x in (b.get("rules") or {}).get("buckets", [])
+                ],
+                "agents": [x.get("key") for x in (b.get("agents") or {}).get("buckets", [])],
+            }
+            for b in buckets
+        ]
 
     rows = run_for(group)
     if not rows and fallback_groups:
@@ -112,22 +130,31 @@ def investigate_ip(indexer: Any, *, ip: str, time_range: str = "-24h") -> dict[s
     # sample raw events from the archive for context (what actually happened)
     events = []
     try:
-        ev = indexer.search("wazuh-archives-*", {
-            "size": 10,
-            "sort": [{"timestamp": {"order": "desc"}}],
-            "query": {"bool": {"filter": [
-                _range_clause(time_range),
-                {"term": {"data.srcip": ip}},
-            ]}},
-        })
+        ev = indexer.search(
+            "wazuh-archives-*",
+            {
+                "size": 10,
+                "sort": [{"timestamp": {"order": "desc"}}],
+                "query": {
+                    "bool": {
+                        "filter": [
+                            _range_clause(time_range),
+                            {"term": {"data.srcip": ip}},
+                        ]
+                    }
+                },
+            },
+        )
         for h in ev.get("hits", {}).get("hits", []):
             src = h.get("_source") or {}
-            events.append({
-                "timestamp": src.get("timestamp"),
-                "location": src.get("location"),
-                "full_log": str(src.get("full_log") or "")[:400],
-                "decoder": (src.get("decoder") or {}).get("name"),
-            })
+            events.append(
+                {
+                    "timestamp": src.get("timestamp"),
+                    "location": src.get("location"),
+                    "full_log": str(src.get("full_log") or "")[:400],
+                    "decoder": (src.get("decoder") or {}).get("name"),
+                }
+            )
     except Exception:  # noqa: BLE001 - archives may be empty/disabled
         pass
 
@@ -138,21 +165,32 @@ def investigate_ip(indexer: Any, *, ip: str, time_range: str = "-24h") -> dict[s
         "max_level": (aggs.get("max_level") or {}).get("value"),
         "first_seen": (aggs.get("first_seen") or {}).get("value_as_string"),
         "last_seen": (aggs.get("last_seen") or {}).get("value_as_string"),
-        "rule_groups": [(b.get("key"), b.get("doc_count")) for b in (aggs.get("rule_groups") or {}).get("buckets", [])],
-        "top_rules": [{
-            "id": b.get("key"),
-            "hits": b.get("doc_count", 0),
-            "level": next((x.get("key") for x in (b.get("levels") or {}).get("buckets", [])), None),
-        } for b in (aggs.get("rules") or {}).get("buckets", [])],
+        "rule_groups": [
+            (b.get("key"), b.get("doc_count"))
+            for b in (aggs.get("rule_groups") or {}).get("buckets", [])
+        ],
+        "top_rules": [
+            {
+                "id": b.get("key"),
+                "hits": b.get("doc_count", 0),
+                "level": next(
+                    (x.get("key") for x in (b.get("levels") or {}).get("buckets", [])), None
+                ),
+            }
+            for b in (aggs.get("rules") or {}).get("buckets", [])
+        ],
         "agents_hit": [b.get("key") for b in (aggs.get("agents") or {}).get("buckets", [])],
         "targets": [b.get("key") for b in (aggs.get("dst_ips") or {}).get("buckets", [])],
         "dst_ports": [b.get("key") for b in (aggs.get("dst_ports") or {}).get("buckets", [])],
         "mitre_techniques": [b.get("key") for b in (aggs.get("mitre") or {}).get("buckets", [])],
-        "timeline": [{
-            "at": b.get("key_as_string"),
-            "alerts": b.get("doc_count", 0),
-            "max_level": (b.get("max_level") or {}).get("value"),
-        } for b in (aggs.get("timeline") or {}).get("buckets", [])],
+        "timeline": [
+            {
+                "at": b.get("key_as_string"),
+                "alerts": b.get("doc_count", 0),
+                "max_level": (b.get("max_level") or {}).get("value"),
+            }
+            for b in (aggs.get("timeline") or {}).get("buckets", [])
+        ],
         "sample_events": events,
     }
 
@@ -162,11 +200,14 @@ def why_did_alert_trigger(indexer: Any, *, alert_id: str) -> dict[str, Any]:
     """Pull one alert + explain it: matched rule, MITRE, and surrounding raw
     events from the same source around the same time."""
     alert = None
-    resp = indexer.search("wazuh-alerts-*", {
-        "size": 5,
-        "query": {"bool": {"filter": [{"term": {"id": alert_id}}]}},
-        "sort": [{"timestamp": {"order": "desc"}}],
-    })
+    resp = indexer.search(
+        "wazuh-alerts-*",
+        {
+            "size": 5,
+            "query": {"bool": {"filter": [{"term": {"id": alert_id}}]}},
+            "sort": [{"timestamp": {"order": "desc"}}],
+        },
+    )
     for h in resp.get("hits", {}).get("hits", []):
         src = h.get("_source") or {}
         if str(src.get("id")) == str(alert_id):
@@ -190,16 +231,22 @@ def why_did_alert_trigger(indexer: Any, *, alert_id: str) -> dict[str, Any]:
                 must.append({"term": {"data.srcip": src_ip}})
             elif agent:
                 must.append({"term": {"agent.name": agent}})
-            r = indexer.search("wazuh-archives-*", {
-                "size": 20,
-                "sort": [{"timestamp": {"order": "desc"}}],
-                "query": {"bool": {"filter": must}},
-            })
-            related = [{
-                "timestamp": (h.get("_source") or {}).get("timestamp"),
-                "location": (h.get("_source") or {}).get("location"),
-                "full_log": str((h.get("_source") or {}).get("full_log") or "")[:300],
-            } for h in r.get("hits", {}).get("hits", [])]
+            r = indexer.search(
+                "wazuh-archives-*",
+                {
+                    "size": 20,
+                    "sort": [{"timestamp": {"order": "desc"}}],
+                    "query": {"bool": {"filter": must}},
+                },
+            )
+            related = [
+                {
+                    "timestamp": (h.get("_source") or {}).get("timestamp"),
+                    "location": (h.get("_source") or {}).get("location"),
+                    "full_log": str((h.get("_source") or {}).get("full_log") or "")[:300],
+                }
+                for h in r.get("hits", {}).get("hits", [])
+            ]
         except Exception:  # noqa: BLE001
             pass
 
@@ -224,10 +271,12 @@ def why_did_alert_trigger(indexer: Any, *, alert_id: str) -> dict[str, Any]:
 class InvestigateIP(BaseWazuhTool):
     name = "investigate_ip"
     permission = Permission.READ
-    description = ("Deep investigation of one source IP across Wazuh alerts and raw events: "
-                   "alert volume, rule groups/rules fired, max level, targets, ports, MITRE "
-                   "techniques, a timeline, and sample raw events. Use for 'investigate this IP' "
-                   "or 'tell me about 203.0.113.7'.")
+    description = (
+        "Deep investigation of one source IP across Wazuh alerts and raw events: "
+        "alert volume, rule groups/rules fired, max level, targets, ports, MITRE "
+        "techniques, a timeline, and sample raw events. Use for 'investigate this IP' "
+        "or 'tell me about 203.0.113.7'."
+    )
     input_schema = {
         "type": "object",
         "properties": {
@@ -245,14 +294,19 @@ class InvestigateIP(BaseWazuhTool):
 class TopAttackingIPs(BaseWazuhTool):
     name = "top_attacking_ips"
     permission = Permission.READ
-    description = ("Rank source IPs by alert volume over a time window, restricted to a rule "
-                   "group when given (default 'web' = web server attacks; also tries 'attack'). "
-                   "Returns per-IP counts, rule groups, top rules, max level, first/last seen. "
-                   "Use for 'top attacking IPs against my web servers in the last 24h'.")
+    description = (
+        "Rank source IPs by alert volume over a time window, restricted to a rule "
+        "group when given (default 'web' = web server attacks; also tries 'attack'). "
+        "Returns per-IP counts, rule groups, top rules, max level, first/last seen. "
+        "Use for 'top attacking IPs against my web servers in the last 24h'."
+    )
     input_schema = {
         "type": "object",
         "properties": {
-            "group": {"type": "string", "description": "rule group to restrict to, e.g. web, attack, authentication_failures"},
+            "group": {
+                "type": "string",
+                "description": "rule group to restrict to, e.g. web, attack, authentication_failures",
+            },
             "time_range": {"type": "string", "description": "default -24h"},
             "size": {"type": "integer", "description": "how many IPs (default 10)"},
         },
@@ -262,16 +316,22 @@ class TopAttackingIPs(BaseWazuhTool):
     def run(self, ctx: ToolContext, **params: Any) -> Any:
         p = self.validate(params)
         size = min(int(p.get("size", 10) or 10), 50)
-        return top_attacking_ips(ctx.indexer, group=p.get("group") or "web",
-                                 time_range=p.get("time_range", "-24h"), size=size)
+        return top_attacking_ips(
+            ctx.indexer,
+            group=p.get("group") or "web",
+            time_range=p.get("time_range", "-24h"),
+            size=size,
+        )
 
 
 class WhyDidAlertTrigger(BaseWazuhTool):
     name = "why_did_alert_trigger"
     permission = Permission.READ
-    description = ("Explain one alert: matched rule + level + groups + MITRE, the raw log, and "
-                   "surrounding events from the same source. Use for 'why did this alert fire' "
-                   "or 'explain alert <id>'.")
+    description = (
+        "Explain one alert: matched rule + level + groups + MITRE, the raw log, and "
+        "surrounding events from the same source. Use for 'why did this alert fire' "
+        "or 'explain alert <id>'."
+    )
     input_schema = {
         "type": "object",
         "properties": {"alert_id": {"type": "string"}},

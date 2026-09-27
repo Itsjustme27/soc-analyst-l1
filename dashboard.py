@@ -19,8 +19,12 @@ API (JSON): /api/platforms, /api/providers,
             POST /api/providers/<id>/test, GET /api/providers/<id>/alerts,
             POST /api/providers/<id>/triage
 """
+
 from __future__ import annotations
+
+import hmac
 import json
+import logging
 import os
 import signal
 import subprocess
@@ -30,31 +34,61 @@ from dataclasses import asdict
 from pathlib import Path
 
 from flask import Flask, jsonify, render_template, request
+from werkzeug.exceptions import HTTPException
 
-from config import cfg
-import siem_providers as store
 import agent_control as ac
-from connectors.siem import PLATFORM_FIELDS
-from agent.triage_agent import TriageAgent, needs_human_review
+import siem_providers as store
 from agent.chat_agent import ChatAgent
+from agent.triage_agent import TriageAgent, needs_human_review
+from config import cfg
+from connectors.siem import PLATFORM_FIELDS
 from llm.base import LLMRateLimitedError
 
 # SIGKILL is Unix-only; on Windows TerminateProcess is reached via SIGTERM.
 _SIGKILL = getattr(signal, "SIGKILL", signal.SIGTERM)
-import lookup_tables as lookup
-import rules
-import notify
-import metrics
-import cases
 import audit
+import cases
+import lookup_tables as lookup
+import metrics
+import notify
+import rules
 
 app = Flask(__name__)
+
+logger = logging.getLogger("dashboard")
 
 TRIAGE_LIMIT_DEFAULT = 5
 
 
+def _safe_error(exc: BaseException, message: str) -> str:
+    """Return a stable, generic message instead of exception internals.
+
+    The full exception (type, message, traceback) is logged server-side only;
+    the API client never sees file paths, line numbers or exception class
+    names. Used at the API boundary when an unexpected exception is caught.
+    """
+    logger.exception("%s (%s): %r", message, type(exc).__name__, exc)
+    return message
+
+
+@app.errorhandler(Exception)
+def _handle_unhandled_exception(exc: BaseException):
+    """API boundary: unexpected exceptions must never leak a stack trace.
+
+    Returns a generic JSON 500 - the full traceback goes to the server log
+    only. Standard HTTP errors (404, 405, ...) pass through unchanged so
+    Flask still renders their normal responses.
+    """
+    if isinstance(exc, HTTPException):
+        return exc
+    logger.exception("Unhandled exception in API request")
+    return jsonify({"error": "Internal server error."}), 500
+
+
 def _triage_log_path(path: str | Path | None = None) -> Path:
-    return Path(path) if path else Path(getattr(cfg, "TRIAGE_LOG_PATH", "") or "data/triage_log.jsonl")
+    return (
+        Path(path) if path else Path(getattr(cfg, "TRIAGE_LOG_PATH", "") or "data/triage_log.jsonl")
+    )
 
 
 def _chat_log_path(path: str | Path | None = None) -> Path:
@@ -62,7 +96,11 @@ def _chat_log_path(path: str | Path | None = None) -> Path:
 
 
 def _engineer_log_path(path: str | Path | None = None) -> Path:
-    return Path(path) if path else Path(getattr(cfg, "ENGINEER_LOG_PATH", "") or "data/engineer_log.jsonl")
+    return (
+        Path(path)
+        if path
+        else Path(getattr(cfg, "ENGINEER_LOG_PATH", "") or "data/engineer_log.jsonl")
+    )
 
 
 # --------------------------------------------------------------------------- #
@@ -97,27 +135,30 @@ DEFAULT_ROLE = "admin"
 
 def _auth_configured() -> bool:
     from config import cfg
+
     return bool(getattr(cfg, "DASHBOARD_TOKEN", "") or getattr(cfg, "DASHBOARD_USERS", ""))
 
 
 def _supplied_token() -> str:
     supplied = request.headers.get("Authorization", "")
     if supplied.startswith("Bearer "):
-        return supplied[len("Bearer "):]
+        return supplied[len("Bearer ") :]
     return request.args.get("token", "")
 
 
 def _token_ok() -> bool:
     from config import cfg
+
     if not getattr(cfg, "DASHBOARD_TOKEN", ""):
         return False
-    return _supplied_token() == cfg.DASHBOARD_TOKEN
+    return hmac.compare_digest(_supplied_token(), cfg.DASHBOARD_TOKEN)
 
 
 def _token_user() -> tuple[str, str] | None:
     """Map a Bearer token to a verified (user, role) identity from DASHBOARD_USERS.
     None when per-user auth isn't configured or the token is unknown."""
     from config import cfg
+
     users_cfg = getattr(cfg, "DASHBOARD_USERS", "") or ""
     if not users_cfg:
         return None
@@ -130,7 +171,7 @@ def _token_user() -> tuple[str, str] | None:
             continue
         user, tok = parts[0], parts[1]
         role = parts[2] if len(parts) > 2 else DEFAULT_ROLE
-        if tok == supplied:
+        if hmac.compare_digest(tok, supplied):
             return user, (role if role in ROLES else DEFAULT_ROLE)
     return None
 
@@ -157,11 +198,13 @@ def _unauthorized() -> tuple:
     """401 that says WHICH mistake the caller made. Distinguishing these matters:
     a caller that simply has no token configured needs to know auth is OFF
     (approvals work, unverified), not that its token was rejected."""
-    hint = ("set Authorization: Bearer <token> or ?token=<token>"
-            if _auth_configured() else
-            "dashboard auth is disabled (no DASHBOARD_TOKEN/DASHBOARD_USERS), so "
-            "this request is treated as local-trust; configure either to enable "
-            "verified identities and separation of duties")
+    hint = (
+        "set Authorization: Bearer <token> or ?token=<token>"
+        if _auth_configured()
+        else "dashboard auth is disabled (no DASHBOARD_TOKEN/DASHBOARD_USERS), so "
+        "this request is treated as local-trust; configure either to enable "
+        "verified identities and separation of duties"
+    )
     return jsonify({"error": f"Unauthorized - {hint}."}), 401
 
 
@@ -175,9 +218,14 @@ def _require_role(minimum: str):
     if not user:
         return _unauthorized()
     if ROLES.get(role, 0) < ROLES[minimum]:
-        return jsonify({"error": (
-            f"Forbidden - '{user}' has role '{role}'; '{minimum}' or higher is "
-            f"required for this action.")}), 403
+        return jsonify(
+            {
+                "error": (
+                    f"Forbidden - '{user}' has role '{role}'; '{minimum}' or higher is "
+                    f"required for this action."
+                )
+            }
+        ), 403
     return None
 
 
@@ -193,8 +241,14 @@ def _require_dashboard_token():
     return _unauthorized()
 
 
-def _audit_write(action: str, params: dict, result: object = None, *,
-                 execution_status: str = "success", error: str | None = None) -> None:
+def _audit_write(
+    action: str,
+    params: dict,
+    result: object = None,
+    *,
+    execution_status: str = "success",
+    error: str | None = None,
+) -> None:
     """Audit a direct (non-proposal) dashboard write.
 
     The Approval Center routes have always logged their own acts, but the
@@ -203,10 +257,18 @@ def _audit_write(action: str, params: dict, result: object = None, *,
     /api/audit even though it lands in local_rules.xml. Every mutating route
     below calls this. Secrets are redacted by audit.audit_log itself."""
     user, _role, _verified = _identity()
-    audit.audit_log(tool="dashboard_ui", action=action, permission="human",
-                    approval_status="not_required",
-                    execution_status=execution_status, error=error,
-                    params=params, result=result, user=user, agent="dashboard_ui")
+    audit.audit_log(
+        tool="dashboard_ui",
+        action=action,
+        permission="human",
+        approval_status="not_required",
+        execution_status=execution_status,
+        error=error,
+        params=params,
+        result=result,
+        user=user,
+        agent="dashboard_ui",
+    )
 
 
 # --------------------------------------------------------------------------- #
@@ -216,8 +278,8 @@ def _connector_or_error(provider_id: str):
         return None, (jsonify({"error": f"Provider '{provider_id}' not found."}), 404), None
     try:
         conn = store.connector_for(provider)
-    except Exception as e:  # noqa: BLE001 - surface config errors to the UI
-        return None, (jsonify({"error": f"Could not build connector: {e}"}), 400), None
+    except Exception as e:  # noqa: BLE001
+        return None, (jsonify({"error": _safe_error(e, "Could not build connector.")}), 400), None
     return conn, None, provider
 
 
@@ -230,12 +292,15 @@ def index():
 @app.get("/api/health")
 def health():
     from config import cfg
-    return jsonify({
-        "status": "ok",
-        "llm_provider": cfg.LLM_PROVIDER,
-        "siem_provider": cfg.SIEM_PROVIDER,
-        "mock_mode": cfg.MOCK_MODE,
-    })
+
+    return jsonify(
+        {
+            "status": "ok",
+            "llm_provider": cfg.LLM_PROVIDER,
+            "siem_provider": cfg.SIEM_PROVIDER,
+            "mock_mode": cfg.MOCK_MODE,
+        }
+    )
 
 
 @app.get("/api/platforms")
@@ -281,8 +346,9 @@ def api_add_provider():
     try:
         provider = store.add_provider(payload)
     except store.ProviderError as e:
-        _audit_write("provider_add", {"provider": payload}, None,
-                     execution_status="failure", error=str(e))
+        _audit_write(
+            "provider_add", {"provider": payload}, None, execution_status="failure", error=str(e)
+        )
         return jsonify({"error": str(e)}), 400
     _audit_write("provider_add", {"provider": payload}, {"id": provider.get("id")})
     return jsonify({"provider": store.redact_provider(provider)}), 201
@@ -294,7 +360,9 @@ def api_delete_provider(provider_id: str):
     if denied:
         return denied
     if not store.remove_provider(provider_id):
-        return jsonify({"error": "Provider not found, or it is env-seeded (edit .env to change it)."}), 404
+        return jsonify(
+            {"error": "Provider not found, or it is env-seeded (edit .env to change it)."}
+        ), 404
     _audit_write("provider_delete", {"provider_id": provider_id}, {"ok": True})
     return jsonify({"ok": True})
 
@@ -316,14 +384,16 @@ def api_alerts(provider_id: str):
     try:
         alerts = conn.get_new_alerts()
     except Exception as e:  # noqa: BLE001
-        return jsonify({"error": f"Failed to pull alerts: {e}"}), 502
-    return jsonify({
-        "provider_id": provider_id,
-        "provider_name": provider["name"],
-        "platform": provider["platform"],
-        "count": len(alerts),
-        "alerts": alerts[:limit],
-    })
+        return jsonify({"error": _safe_error(e, "Failed to pull alerts.")}), 502
+    return jsonify(
+        {
+            "provider_id": provider_id,
+            "provider_name": provider["name"],
+            "platform": provider["platform"],
+            "count": len(alerts),
+            "alerts": alerts[:limit],
+        }
+    )
 
 
 @app.post("/api/providers/<provider_id>/triage")
@@ -337,14 +407,16 @@ def api_triage(provider_id: str):
     try:
         alerts = conn.get_new_alerts()
     except Exception as e:  # noqa: BLE001
-        return jsonify({"error": f"Failed to pull alerts: {e}"}), 502
+        return jsonify({"error": _safe_error(e, "Failed to pull alerts.")}), 502
     if not alerts:
-        return jsonify({"provider_id": provider_id, "triaged": 0, "results": [], "note": "No new alerts."})
+        return jsonify(
+            {"provider_id": provider_id, "triaged": 0, "results": [], "note": "No new alerts."}
+        )
 
     try:
         agent = TriageAgent(siem=conn)
     except Exception as e:  # noqa: BLE001 - e.g. missing LLM key
-        return jsonify({"error": f"Could not start the triage agent: {e}"}), 400
+        return jsonify({"error": _safe_error(e, "Could not start the triage agent.")}), 400
 
     _triage_log_path().parent.mkdir(parents=True, exist_ok=True)
     results = []
@@ -363,35 +435,55 @@ def api_triage(provider_id: str):
         try:
             result = agent.triage(alert)
         except Exception as e:  # noqa: BLE001
-            results.append({"alert_id": alert.get("alert_id", "?"), "rule_id": alert.get("rule_id"), "error": str(e)})
+            results.append(
+                {
+                    "alert_id": alert.get("alert_id", "?"),
+                    "rule_id": alert.get("rule_id"),
+                    "error": _safe_error(e, "Triage failed for this alert."),
+                }
+            )
             continue
         needs_human = needs_human_review(result, rule_matches)
         with open(_triage_log_path(), "a") as f:
-            f.write(json.dumps({
-                "alert": alert,
-                "result": asdict(result),
-                "rule_matches": rule_matches,
+            f.write(
+                json.dumps(
+                    {
+                        "alert": alert,
+                        "result": asdict(result),
+                        "rule_matches": rule_matches,
+                        "needs_human_review": needs_human,
+                        "siem_provider": {
+                            "id": provider_id,
+                            "name": provider["name"],
+                            "platform": provider["platform"],
+                        },
+                    },
+                    default=str,
+                )
+                + "\n"
+            )
+        results.append(
+            {
+                "alert_id": alert.get("alert_id", "?"),
+                "rule_id": alert.get("rule_id"),
+                "rule_name": alert.get("rule_name", alert.get("description", "")),
+                "verdict": result.verdict,
+                "confidence": result.confidence,
+                "recommended_action": result.recommended_action,
+                "rationale": result.rationale,
+                "rule_matches": [m["name"] for m in triggered],
                 "needs_human_review": needs_human,
-                "siem_provider": {"id": provider_id, "name": provider["name"], "platform": provider["platform"]},
-            }, default=str) + "\n")
-        results.append({
-            "alert_id": alert.get("alert_id", "?"),
-            "rule_id": alert.get("rule_id"),
-            "rule_name": alert.get("rule_name", alert.get("description", "")),
-            "verdict": result.verdict,
-            "confidence": result.confidence,
-            "recommended_action": result.recommended_action,
-            "rationale": result.rationale,
-            "rule_matches": [m["name"] for m in triggered],
-            "needs_human_review": needs_human,
-        })
+            }
+        )
 
-    return jsonify({
-        "provider_id": provider_id,
-        "provider_name": provider["name"],
-        "triaged": len(results),
-        "results": results,
-    })
+    return jsonify(
+        {
+            "provider_id": provider_id,
+            "provider_name": provider["name"],
+            "triaged": len(results),
+            "results": results,
+        }
+    )
 
 
 # --------------------------------------------------------------------------- #
@@ -420,7 +512,7 @@ def api_chat():
     try:
         agent = ChatAgent(siem=siem, provider_id=provider_id or None)
     except Exception as e:  # noqa: BLE001
-        return jsonify({"error": f"Could not start the chat agent: {e}"}), 400
+        return jsonify({"error": _safe_error(e, "Could not start the chat agent.")}), 400
 
     try:
         result = agent.chat(user_message=message, history=history or [])
@@ -429,27 +521,37 @@ def api_chat():
         # (with the gateway's Retry-After when known) instead of a Flask 500
         # traceback - and never retry the message here, that would just keep
         # the key inside the rate-limit window.
-        return jsonify({
-            "error": "The LLM gateway is rate limited; please wait a moment and try again.",
-            "retry_after": e.retry_after,
-            "request_id": e.request_id,
-        }), 429
+        return jsonify(
+            {
+                "error": "The LLM gateway is rate limited; please wait a moment and try again.",
+                "retry_after": e.retry_after,
+                "request_id": e.request_id,
+            }
+        ), 429
 
     _chat_log_path().parent.mkdir(parents=True, exist_ok=True)
     with open(_chat_log_path(), "a") as f:
-        f.write(json.dumps({
-            "ts": time.strftime("%Y-%m-%dT%H:%M:%S"),
-            "message": message,
+        f.write(
+            json.dumps(
+                {
+                    "ts": time.strftime("%Y-%m-%dT%H:%M:%S"),
+                    "message": message,
+                    "reply": result.reply,
+                    "data": result.data,
+                    "transcript_len": len(result.transcript),
+                },
+                default=str,
+            )
+            + "\n"
+        )
+
+    return jsonify(
+        {
             "reply": result.reply,
             "data": result.data,
             "transcript_len": len(result.transcript),
-        }, default=str) + "\n")
-
-    return jsonify({
-        "reply": result.reply,
-        "data": result.data,
-        "transcript_len": len(result.transcript),
-    })
+        }
+    )
 
 
 @app.get("/api/chat/history")
@@ -490,12 +592,24 @@ def api_create_lookup_table():
     try:
         table = lookup.create_lookup_table(name, description)
     except KeyError as e:
-        _audit_write("lookup_table_create", {"name": name}, None,
-                     execution_status="failure", error=str(e))
+        _audit_write(
+            "lookup_table_create", {"name": name}, None, execution_status="failure", error=str(e)
+        )
         return jsonify({"error": str(e)}), 409
-    _audit_write("lookup_table_create", {"name": name, "description": description},
-                 {"entry_count": len((table.get("entries") or {}))})
-    return jsonify({"table": {"name": name, "entry_count": len((table.get("entries") or {})), "updated": table.get("updated")}}), 201
+    _audit_write(
+        "lookup_table_create",
+        {"name": name, "description": description},
+        {"entry_count": len(table.get("entries") or {})},
+    )
+    return jsonify(
+        {
+            "table": {
+                "name": name,
+                "entry_count": len(table.get("entries") or {}),
+                "updated": table.get("updated"),
+            }
+        }
+    ), 201
 
 
 @app.get("/api/lookup-tables/<name>")
@@ -516,12 +630,27 @@ def api_upsert_lookup_entry(name: str, key: str):
     try:
         table = lookup.upsert_lookup_entry(name, key, value)
     except Exception as e:  # noqa: BLE001
-        _audit_write("lookup_entry_upsert", {"name": name, "key": key}, None,
-                     execution_status="failure", error=str(e))
-        return jsonify({"error": str(e)}), 400
-    _audit_write("lookup_entry_upsert", {"name": name, "key": key, "value": value},
-                 {"entry_count": len((table.get("entries") or {}))})
-    return jsonify({"name": name, "key": key, "entry_count": len((table.get("entries") or {})), "updated": table.get("updated")})
+        _audit_write(
+            "lookup_entry_upsert",
+            {"name": name, "key": key},
+            None,
+            execution_status="failure",
+            error=str(e),
+        )
+        return jsonify({"error": _safe_error(e, "Could not update lookup entry.")}), 400
+    _audit_write(
+        "lookup_entry_upsert",
+        {"name": name, "key": key, "value": value},
+        {"entry_count": len(table.get("entries") or {})},
+    )
+    return jsonify(
+        {
+            "name": name,
+            "key": key,
+            "entry_count": len(table.get("entries") or {}),
+            "updated": table.get("updated"),
+        }
+    )
 
 
 @app.delete("/api/lookup-tables/<name>/entries/<key>")
@@ -571,8 +700,9 @@ def api_create_rule():
     try:
         rule = rules.create_rule(payload)
     except rules.RuleError as e:
-        _audit_write("rule_create", {"rule": payload}, None,
-                     execution_status="failure", error=str(e))
+        _audit_write(
+            "rule_create", {"rule": payload}, None, execution_status="failure", error=str(e)
+        )
         return jsonify({"error": str(e)}), 400
     _audit_write("rule_create", {"rule": payload}, {"id": rule.get("id")})
     return jsonify({"rule": rule}), 201
@@ -595,8 +725,13 @@ def api_update_rule(rule_id: str):
     try:
         rule = rules.update_rule(rule_id, payload)
     except rules.RuleError as e:
-        _audit_write("rule_update", {"rule_id": rule_id, "patch": payload}, None,
-                     execution_status="failure", error=str(e))
+        _audit_write(
+            "rule_update",
+            {"rule_id": rule_id, "patch": payload},
+            None,
+            execution_status="failure",
+            error=str(e),
+        )
         return jsonify({"error": str(e)}), 400
     if not rule:
         return jsonify({"error": f"Rule '{rule_id}' not found."}), 404
@@ -680,9 +815,13 @@ def api_import_rules():
     try:
         result = rules.import_rules(rule_defs, on_conflict=on_conflict)
     except rules.RuleError as e:
-        _audit_write("rule_import", {"count": len(rule_defs),
-                                     "on_conflict": on_conflict}, None,
-                     execution_status="failure", error=str(e))
+        _audit_write(
+            "rule_import",
+            {"count": len(rule_defs), "on_conflict": on_conflict},
+            None,
+            execution_status="failure",
+            error=str(e),
+        )
         return jsonify({"error": str(e)}), 400
     _audit_write("rule_import", {"count": len(rule_defs), "on_conflict": on_conflict}, result)
     return jsonify(result)
@@ -691,8 +830,30 @@ def api_import_rules():
 # --------------------------------------------------------------------------- #
 # Agent control - overnight watchers: status, spawn, stop, KILL, logs.
 # --------------------------------------------------------------------------- #
+def _siem_selectors() -> set[str]:
+    """Every selector `run.py --siem` accepts: provider ids + platform names.
+
+    Mirrors siem_providers.resolve_connector() exactly so this allowlist can
+    never drift from what the watcher subprocess resolves. Provider ids are
+    generated as `siem-<uuid4 hex>` and platform names are fixed registry
+    keys, so every member is plain [A-Za-z0-9._-] and inert as an argument.
+    """
+    return {p["id"] for p in store.load_providers()} | set(store.SIEM_PLATFORMS)
+
+
 def _spawn_agent(agent_id: str, provider_id: str | None = None) -> int:
     """Start a run.py watcher for `agent_id`, capturing its output to run.log."""
+    # Fail-closed (CodeQL: "Uncontrolled command line"): a user-supplied
+    # --siem selector must resolve against the allowlist before it is
+    # accepted; anything else is rejected outright, never sanitized or
+    # escaped. The agent id is independently confined to a safe charset by
+    # ac.sanitize_id(). Critically, *neither value ever reaches the command
+    # line*: argv is a fixed, fully-static list, so no external user can
+    # influence how the subprocess is spawned, not even by argument
+    # smuggling. The already-validated selector and agent id travel to the
+    # watcher in its process environment instead, which run.py reads on boot.
+    if provider_id is not None and provider_id not in _siem_selectors():
+        raise ValueError(f"Unknown SIEM/pipeline '{provider_id}'.")
     agent_id = ac.sanitize_id(agent_id)
     stop = ac.stop_file_path(agent_id)
     stop.parent.mkdir(parents=True, exist_ok=True)
@@ -701,21 +862,32 @@ def _spawn_agent(agent_id: str, provider_id: str | None = None) -> int:
     log_path = ac.log_file_path(agent_id)
     log_path.parent.mkdir(parents=True, exist_ok=True)
     log_fh = open(log_path, "ab")
-    cmd = [sys.executable, str(Path(__file__).parent / "run.py"), "--agent-id", agent_id]
+    cmd = [sys.executable, str(Path(__file__).parent / "run.py")]
+    env = dict(os.environ)
+    env["SOC_WATCHER_AGENT_ID"] = agent_id
     if provider_id:
-        cmd += ["--siem", provider_id]
+        env["SOC_WATCHER_SIEM"] = provider_id
     try:
-        proc = subprocess.Popen(cmd, stdout=log_fh, stderr=subprocess.STDOUT,
-                                start_new_session=True)
+        proc = subprocess.Popen(
+            cmd,
+            env=env,
+            stdout=log_fh,
+            stderr=subprocess.STDOUT,
+            start_new_session=True,
+            shell=False,
+        )
     finally:
         log_fh.close()
     # "starting" heartbeat with a visible pid until the watcher's first write.
-    ac.write_heartbeat(agent_id, {
-        "status": "starting",
-        "pid": proc.pid,
-        "at": time.strftime("%Y-%m-%dT%H:%M:%S"),
-        "reason": "started",
-    })
+    ac.write_heartbeat(
+        agent_id,
+        {
+            "status": "starting",
+            "pid": proc.pid,
+            "at": time.strftime("%Y-%m-%dT%H:%M:%S"),
+            "reason": "started",
+        },
+    )
     return proc.pid
 
 
@@ -761,9 +933,21 @@ def api_agent_start():
         return denied
     body = request.get_json(force=True, silent=True) or {}
     provider_id = (body.get("provider_id") or "").strip() or None
-    pid = _spawn_agent("default", provider_id)
-    _audit_write("agent_start", {"agent_id": "default", "provider_id": provider_id},
-                 {"pid": pid})
+    try:
+        pid = _spawn_agent("default", provider_id)
+    except ValueError as e:
+        _audit_write(
+            "agent_start",
+            {"agent_id": "default", "provider_id": provider_id},
+            None,
+            execution_status="failure",
+            error=str(e),
+        )
+        return (
+            jsonify({"error": _safe_error(e, "Could not start the watcher: unknown SIEM/pipeline.")}),
+            400,
+        )
+    _audit_write("agent_start", {"agent_id": "default", "provider_id": provider_id}, {"pid": pid})
     return jsonify({"ok": True, "pid": pid})
 
 
@@ -797,14 +981,28 @@ def api_agents_start():
         return denied
     body = request.get_json(force=True, silent=True) or {}
     provider_id = (body.get("provider_id") or "").strip() or None
-    agent_id = ac.sanitize_id(body.get("agent_id")) if (body.get("agent_id") or "").strip() else (
-        provider_id or "default"
+    agent_id = (
+        ac.sanitize_id(body.get("agent_id"))
+        if (body.get("agent_id") or "").strip()
+        else (provider_id or "default")
     )
     if ac.status(agent_id)["running"]:
         return jsonify({"error": f"Watcher '{agent_id}' is already running."}), 409
-    pid = _spawn_agent(agent_id, provider_id)
-    _audit_write("agent_start", {"agent_id": agent_id, "provider_id": provider_id},
-                 {"pid": pid})
+    try:
+        pid = _spawn_agent(agent_id, provider_id)
+    except ValueError as e:
+        _audit_write(
+            "agent_start",
+            {"agent_id": agent_id, "provider_id": provider_id},
+            None,
+            execution_status="failure",
+            error=str(e),
+        )
+        return (
+            jsonify({"error": _safe_error(e, "Could not start the watcher: unknown SIEM/pipeline.")}),
+            400,
+        )
+    _audit_write("agent_start", {"agent_id": agent_id, "provider_id": provider_id}, {"pid": pid})
     return jsonify({"ok": True, "agent_id": agent_id, "pid": pid})
 
 
@@ -857,8 +1055,8 @@ def _engineer_context(user: str = "dashboard-user", agent: str = "engineer_ui"):
     from tools.api_client import WazuhManagerAPI
     from tools.base import ToolContext
     from tools.indexer_client import IndexerClient
-    return ToolContext(wazuh=WazuhManagerAPI(), indexer=IndexerClient(),
-                       user=user, agent=agent)
+
+    return ToolContext(wazuh=WazuhManagerAPI(), indexer=IndexerClient(), user=user, agent=agent)
 
 
 @app.post("/api/engineer/chat")
@@ -888,6 +1086,7 @@ def api_engineer_chat():
         return jsonify({"error": "message is required."}), 400
     try:
         from agent.soc_engineer import SOCEngineer
+
         engineer = SOCEngineer(user=actor or "dashboard-user")
         result = engineer.chat(user_message=message, history=list(history)[-20:])
     except Exception as e:  # noqa: BLE001 - surface provider/config errors to the UI
@@ -895,19 +1094,29 @@ def api_engineer_chat():
 
     _engineer_log_path().parent.mkdir(parents=True, exist_ok=True)
     with open(_engineer_log_path(), "a") as f:
-        f.write(json.dumps({
-            "ts": time.strftime("%Y-%m-%dT%H:%M:%S"),
-            "message": message,
+        f.write(
+            json.dumps(
+                {
+                    "ts": time.strftime("%Y-%m-%dT%H:%M:%S"),
+                    "message": message,
+                    "reply": result.reply,
+                    "proposal_ids": [p.get("id") for p in result.proposals],
+                    "tool_calls": [
+                        t.get("tool") for t in result.transcript if t.get("type") == "tool"
+                    ],
+                },
+                default=str,
+            )
+            + "\n"
+        )
+    return jsonify(
+        {
             "reply": result.reply,
-            "proposal_ids": [p.get("id") for p in result.proposals],
-            "tool_calls": [t.get("tool") for t in result.transcript if t.get("type") == "tool"],
-        }, default=str) + "\n")
-    return jsonify({
-        "reply": result.reply,
-        "data": result.data,
-        "proposals": result.proposals,
-        "transcript": result.transcript,
-    })
+            "data": result.data,
+            "proposals": result.proposals,
+            "transcript": result.transcript,
+        }
+    )
 
 
 @app.get("/api/engineer/tools")
@@ -915,6 +1124,7 @@ def api_engineer_tools():
     """Canonical tool metadata (name/description/permission) for the builder
     UIs - never arbitrary tool execution on its own."""
     from tools.registry import build_tools_meta
+
     return jsonify({"tools": build_tools_meta()})
 
 
@@ -933,6 +1143,7 @@ def api_engineer_tool():
     if not name:
         return jsonify({"error": "tool is required."}), 400
     from tools.registry import execute as run_tool
+
     ctx = _engineer_context(user=body.get("by") or "dashboard-user", agent="engineer_ui")
     outcome = run_tool(ctx, name, params)
     return jsonify(outcome)
@@ -942,9 +1153,11 @@ def api_engineer_tool():
 @app.get("/api/proposals")
 def api_proposals():
     import approvals
+
     status = request.args.get("status") or None
-    return jsonify({"proposals": [approvals.public_view(p)
-                                  for p in approvals.list_proposals(status)]})
+    return jsonify(
+        {"proposals": [approvals.public_view(p) for p in approvals.list_proposals(status)]}
+    )
 
 
 def _verified_approver() -> tuple[str, bool] | None:
@@ -959,6 +1172,7 @@ def _verified_approver() -> tuple[str, bool] | None:
 @app.post("/api/proposals/<pid>/approve")
 def api_proposal_approve(pid: str):
     import approvals
+
     denied = _require_role("approver")
     if denied:
         return denied
@@ -976,15 +1190,21 @@ def api_proposal_approve(pid: str):
         return jsonify({"error": str(e)}), 409
     except KeyError as e:
         return jsonify({"error": str(e)}), 404
-    audit.audit_log(tool="approval_center", action="proposal_approved",
-                    permission="human", approval_status="approved", params={},
-                    result={"proposal_id": pid, "by": by, "identity_verified": verified})
+    audit.audit_log(
+        tool="approval_center",
+        action="proposal_approved",
+        permission="human",
+        approval_status="approved",
+        params={},
+        result={"proposal_id": pid, "by": by, "identity_verified": verified},
+    )
     return jsonify({"proposal": approvals.public_view(proposal)})
 
 
 @app.post("/api/proposals/<pid>/reject")
 def api_proposal_reject(pid: str):
     import approvals
+
     denied = _require_role("approver")
     if denied:
         return denied
@@ -1000,9 +1220,14 @@ def api_proposal_reject(pid: str):
         return jsonify({"error": str(e)}), 409
     except KeyError as e:
         return jsonify({"error": str(e)}), 404
-    audit.audit_log(tool="approval_center", action="proposal_rejected",
-                    permission="human", approval_status="rejected", params={},
-                    result={"proposal_id": pid, "by": by, "reason": reason})
+    audit.audit_log(
+        tool="approval_center",
+        action="proposal_rejected",
+        permission="human",
+        approval_status="rejected",
+        params={},
+        result={"proposal_id": pid, "by": by, "reason": reason},
+    )
     return jsonify({"proposal": approvals.public_view(proposal)})
 
 
@@ -1018,6 +1243,7 @@ def api_proposal_cancel(pid: str):
     rejected/cancelled) and anything mid-flight (`executing`) are refused -
     history is not rewritten and we never race the executor."""
     import approvals
+
     denied = _require_role("approver")
     if denied:
         return denied
@@ -1033,9 +1259,14 @@ def api_proposal_cancel(pid: str):
         return jsonify({"error": str(e)}), 409
     except KeyError as e:
         return jsonify({"error": str(e)}), 404
-    audit.audit_log(tool="approval_center", action="proposal_cancelled",
-                    permission="human", approval_status="cancelled", params={},
-                    result={"proposal_id": pid, "by": by, "reason": reason})
+    audit.audit_log(
+        tool="approval_center",
+        action="proposal_cancelled",
+        permission="human",
+        approval_status="cancelled",
+        params={},
+        result={"proposal_id": pid, "by": by, "reason": reason},
+    )
     return jsonify({"proposal": approvals.public_view(proposal)})
 
 
@@ -1058,6 +1289,7 @@ def api_proposal_execute(pid: str):
     and audited."""
     import approval_executor
     from config import cfg
+
     body = request.get_json(force=True, silent=True) or {}
     denied = _require_role("approver")
     if denied:
@@ -1100,10 +1332,14 @@ if __name__ == "__main__":
     if cfg.DASHBOARD_TOKEN:
         print("  Auth:      ON - open with ?token=<your DASHBOARD_TOKEN>")
     elif args.host not in ("127.0.0.1", "localhost"):
-        print("  Auth:      OFF - WARNING: binding to a non-local host with no "
-              "DASHBOARD_TOKEN set means every route here is open to anyone "
-              "who can reach this address. Set DASHBOARD_TOKEN in .env.")
+        print(
+            "  Auth:      OFF - WARNING: binding to a non-local host with no "
+            "DASHBOARD_TOKEN set means every route here is open to anyone "
+            "who can reach this address. Set DASHBOARD_TOKEN in .env."
+        )
     else:
-        print("  Auth:      OFF (fine for local-only use - set DASHBOARD_TOKEN before exposing this beyond 127.0.0.1)")
+        print(
+            "  Auth:      OFF (fine for local-only use - set DASHBOARD_TOKEN before exposing this beyond 127.0.0.1)"
+        )
     print("=" * 60)
     app.run(host=args.host, port=args.port, debug=False)

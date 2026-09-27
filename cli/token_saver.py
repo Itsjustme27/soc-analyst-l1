@@ -19,6 +19,7 @@ several calls. Long sessions also re-send every old tool result each call.
 
 "full" mode sends everything unmodified. Estimates use ~4 chars/token.
 """
+
 from __future__ import annotations
 
 import copy
@@ -27,15 +28,41 @@ import re
 from dataclasses import dataclass, field
 from typing import Any
 
-CORE_TOOLS = {"answer_user", "retrieve_wazuh_docs", "search_wazuh_alerts", "get_alerts",
-              "get_alert_status"}
+CORE_TOOLS = {
+    "answer_user",
+    "retrieve_wazuh_docs",
+    "search_wazuh_alerts",
+    "get_alerts",
+    "get_alert_status",
+}
 MAX_DESC = 200
 MAX_PROP_DESC = 90
 OLD_TOOL_OUTPUT_CHARS = 500
 MAX_RELEVANT = 10
 
-_GENERIC = {"wazuh", "get", "set", "the", "and", "for", "with", "run", "end", "new", "all",
-            "from", "this", "that", "what", "show", "list", "check", "please", "can", "you"}
+_GENERIC = {
+    "wazuh",
+    "get",
+    "set",
+    "the",
+    "and",
+    "for",
+    "with",
+    "run",
+    "end",
+    "new",
+    "all",
+    "from",
+    "this",
+    "that",
+    "what",
+    "show",
+    "list",
+    "check",
+    "please",
+    "can",
+    "you",
+}
 _WORD = re.compile(r"[a-z0-9]+")
 
 
@@ -47,7 +74,9 @@ def _stem(w: str) -> str:
 
 
 def _terms(text: str) -> set[str]:
-    return {_stem(w) for w in _WORD.findall((text or "").lower()) if len(w) > 2 and w not in _GENERIC}
+    return {
+        _stem(w) for w in _WORD.findall((text or "").lower()) if len(w) > 2 and w not in _GENERIC
+    }
 
 
 def _first_sentence(text: str, cap: int) -> str:
@@ -60,9 +89,13 @@ def _first_sentence(text: str, cap: int) -> str:
 def trim_tool(tool: dict[str, Any]) -> dict[str, Any]:
     t = copy.deepcopy(tool)
     t["description"] = _first_sentence(t.get("description", ""), MAX_DESC)
-    props = ((t.get("input_schema") or {}).get("properties") or {})
+    props = (t.get("input_schema") or {}).get("properties") or {}
     for spec in props.values():
-        if isinstance(spec, dict) and isinstance(spec.get("description"), str) and len(spec["description"]) > MAX_PROP_DESC:
+        if (
+            isinstance(spec, dict)
+            and isinstance(spec.get("description"), str)
+            and len(spec["description"]) > MAX_PROP_DESC
+        ):
             spec["description"] = spec["description"][: MAX_PROP_DESC - 1] + "…"
     return t
 
@@ -76,17 +109,21 @@ def relevance(tool: dict[str, Any], terms: set[str]) -> int:
 @dataclass
 class LeanState:
     """Per-agent session memory of which tools the model has needed."""
+
     active: set[str] = field(default_factory=set)
 
-    def select(self, tools: list[dict[str, Any]], latest_user_text: str,
-               core: set[str] = CORE_TOOLS) -> list[dict[str, Any]]:
+    def select(
+        self, tools: list[dict[str, Any]], latest_user_text: str, core: set[str] = CORE_TOOLS
+    ) -> list[dict[str, Any]]:
         terms = _terms(latest_user_text)
         scored = sorted(((relevance(t, terms), t) for t in tools), key=lambda x: -x[0])
         relevant = {t["name"] for s, t in scored[:MAX_RELEVANT] if s > 0}
         keep = core | self.active | relevant
         return [trim_tool(t) for t in tools if t.get("name") in keep]
 
-    def search(self, tools: list[dict[str, Any]], query: str, limit: int = 8) -> list[dict[str, Any]]:
+    def search(
+        self, tools: list[dict[str, Any]], query: str, limit: int = 8
+    ) -> list[dict[str, Any]]:
         terms = _terms(query)
         scored = sorted(((relevance(t, terms), t) for t in tools), key=lambda x: -x[0])
         return [t for s, t in scored[:limit] if s > 0]
@@ -99,18 +136,26 @@ def latest_user_text(messages: list[dict[str, Any]]) -> str:
     return ""
 
 
-def compact_old_tool_output(messages: list[dict[str, Any]], limit: int = OLD_TOOL_OUTPUT_CHARS
-                            ) -> list[dict[str, Any]]:
+def compact_old_tool_output(
+    messages: list[dict[str, Any]], limit: int = OLD_TOOL_OUTPUT_CHARS
+) -> list[dict[str, Any]]:
     """Shorten tool results that came before the latest user message."""
     last_user = max((i for i, m in enumerate(messages) if m.get("role") == "user"), default=-1)
     out = []
     for i, m in enumerate(messages):
         c = m.get("content")
         if i < last_user and m.get("role") == "tool" and isinstance(c, str) and len(c) > limit:
-            m = {**m, "content": c[:limit] + f"\n…[earlier tool output trimmed from {len(c)} chars]"}
+            m = {
+                **m,
+                "content": c[:limit] + f"\n…[earlier tool output trimmed from {len(c)} chars]",
+            }
         out.append(m)
     return out
 
 
 def estimate_chars(system: str, messages: list[dict[str, Any]], tools: list[dict[str, Any]]) -> int:
-    return len(system or "") + len(json.dumps(messages, default=str)) + len(json.dumps(tools, default=str))
+    return (
+        len(system or "")
+        + len(json.dumps(messages, default=str))
+        + len(json.dumps(tools, default=str))
+    )

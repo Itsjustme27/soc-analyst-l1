@@ -14,6 +14,7 @@ The detection engine combines static XML validation (before proposal) +
 this tool (after deploy) so it never claims a rule works without the manager
 confirming it.
 """
+
 from __future__ import annotations
 
 from typing import Any
@@ -50,17 +51,25 @@ def _parse_logtest(data: dict[str, Any]) -> dict[str, Any]:
 
 class RunWazuhLogtest(BaseWazuhTool):
     name = "run_wazuh_logtest"
-    description = ("Run Wazuh logtest: feed one log line through the manager's *deployed* ruleset "
-                   "and see which decoder + rule fire, plus the decoded fields. Use to verify a "
-                   "candidate rule after deployment, check how existing rules treat a log, or "
-                   "confirm a log format decodes at all. Pass 'log_format' of the source "
-                   "(syslog, json, eventlog, ...).")
+    description = (
+        "Run Wazuh logtest: feed one log line through the manager's *deployed* ruleset "
+        "and see which decoder + rule fire, plus the decoded fields. Use to verify a "
+        "candidate rule after deployment, check how existing rules treat a log, or "
+        "confirm a log format decodes at all. Pass 'log_format' of the source "
+        "(syslog, json, eventlog, ...)."
+    )
     input_schema = {
         "type": "object",
         "properties": {
             "log": {"type": "string", "description": "the log line to test"},
-            "log_format": {"type": "string", "description": "syslog, json, eventlog, ... (default syslog)"},
-            "location": {"type": "string", "description": "pretend source path, e.g. /var/log/auth.log"},
+            "log_format": {
+                "type": "string",
+                "description": "syslog, json, eventlog, ... (default syslog)",
+            },
+            "location": {
+                "type": "string",
+                "description": "pretend source path, e.g. /var/log/auth.log",
+            },
             "token": {"type": "string", "description": "reuse an existing logtest session token"},
         },
         "required": ["log"],

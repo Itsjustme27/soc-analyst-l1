@@ -3,6 +3,7 @@ Hermetic tests for the Wazuh dashboard saved-objects client (session auth).
 
 Run: python -m unittest discover -s tests -v
 """
+
 from __future__ import annotations
 
 import unittest
@@ -37,14 +38,16 @@ class DashboardClientAuthTests(unittest.TestCase):
         patcher.start()
         self.addCleanup(patcher.stop)
         self._sources = mock.patch.object(
-            dash_client, "_credential_sources",
+            dash_client,
+            "_credential_sources",
             return_value=[("dashuser", "dashpass"), ("idxuser", "idxpass")],
         )
         self._sources.start()
         self.addCleanup(self._sources.stop)
         # Hermetic: ignore operator .env WAZUH_DASHBOARD_URL.
         self._url = mock.patch.object(
-            dash_client.cfg, "WAZUH_DASHBOARD_URL", "https://localhost:443")
+            dash_client.cfg, "WAZUH_DASHBOARD_URL", "https://localhost:443"
+        )
         self._url.start()
         self.addCleanup(self._url.stop)
 
@@ -54,7 +57,9 @@ class DashboardClientAuthTests(unittest.TestCase):
         self._session.post.assert_called_once()
         login_call = self._session.post.call_args
         self.assertEqual(login_call.args[0], "https://localhost:443/auth/login")
-        self.assertEqual(login_call.kwargs["json"], {"username": "dashuser", "password": "dashpass"})
+        self.assertEqual(
+            login_call.kwargs["json"], {"username": "dashuser", "password": "dashpass"}
+        )
         self.assertEqual(login_call.kwargs["headers"], {"osd-xsrf": "true"})
         self.assertEqual(dash_client._LOGGED_IN_USER, "dashuser")
         self._session.request.assert_called_once()

@@ -10,7 +10,9 @@ Each mock provider instance can carry a distinct name, so the dashboard can
 demo *multiple* SIEM connections side by side (e.g. "Mock Splunk" vs
 "Mock Sentinel") without any real endpoints.
 """
+
 from __future__ import annotations
+
 import json
 from pathlib import Path
 from typing import Any
@@ -75,7 +77,10 @@ class MockSiemConnector(SIEMConnector):
 
     def __init__(self, name: str = "mock", config: dict[str, Any] | None = None):
         super().__init__(name=name, config=config)
-        alerts_file = resolve_cfg(config, "alerts_file", cfg.MOCK_SIEM_ALERTS_FILE) or "seed_data/mock_alerts.json"
+        alerts_file = (
+            resolve_cfg(config, "alerts_file", cfg.MOCK_SIEM_ALERTS_FILE)
+            or "seed_data/mock_alerts.json"
+        )
         self._alerts = self._load_alerts(alerts_file)
 
     # ------------------------------------------------------------------ #
@@ -111,9 +116,25 @@ class MockSiemConnector(SIEMConnector):
     ) -> list[dict[str, Any]]:
         if user == "jsmith":
             return [
-                {"_time": "2026-09-22T03:14:00Z", "event": "VPN login attempt", "src_ip": "185.220.101.7", "result": "failure"},
-                {"_time": "2026-09-22T03:15:00Z", "event": "VPN login attempt", "src_ip": "185.220.101.7", "result": "failure"},
-                {"_time": "2026-09-22T03:21:00Z", "event": "O365 login", "src_ip": "185.220.101.7", "result": "success", "mfa": "not_prompted"},
+                {
+                    "_time": "2026-09-22T03:14:00Z",
+                    "event": "VPN login attempt",
+                    "src_ip": "185.220.101.7",
+                    "result": "failure",
+                },
+                {
+                    "_time": "2026-09-22T03:15:00Z",
+                    "event": "VPN login attempt",
+                    "src_ip": "185.220.101.7",
+                    "result": "failure",
+                },
+                {
+                    "_time": "2026-09-22T03:21:00Z",
+                    "event": "O365 login",
+                    "src_ip": "185.220.101.7",
+                    "result": "success",
+                    "mfa": "not_prompted",
+                },
             ]
         return []
 

@@ -21,6 +21,7 @@ Skills are trusted *only* because they live in the repo: the loader never
 reads skill text from Wazuh logs, events, or the RAG store, and the CLI audits
 the active skill set with every run.
 """
+
 from __future__ import annotations
 
 import re
@@ -37,14 +38,105 @@ _FRONTMATTER_RE = re.compile(r"^\ufeff?---[ \t]*\n(.*?)\n---[ \t]*\n", re.DOTALL
 _DESCRIPTION_CAP = 300
 _INSTALL_SIZE_CAP = 512 * 1024  # refuse skill packs that copy > 512KB
 _STOPWORDS = frozenset(
-    (
-        "the a an and or but for with you your its our their this that these those "
-        "from have has had will would could should can may might must shall is are "
-        "was were be been being do does did not no so to of in on at by as it he "
-        "she they we i me my what which who whom when where why how about into over "
-        "under only just then than there here also other more most some any all "
-        "each few both once new need needs help please list show me us give"
-    ).split()
+    [
+        "the",
+        "a",
+        "an",
+        "and",
+        "or",
+        "but",
+        "for",
+        "with",
+        "you",
+        "your",
+        "its",
+        "our",
+        "their",
+        "this",
+        "that",
+        "these",
+        "those",
+        "from",
+        "have",
+        "has",
+        "had",
+        "will",
+        "would",
+        "could",
+        "should",
+        "can",
+        "may",
+        "might",
+        "must",
+        "shall",
+        "is",
+        "are",
+        "was",
+        "were",
+        "be",
+        "been",
+        "being",
+        "do",
+        "does",
+        "did",
+        "not",
+        "no",
+        "so",
+        "to",
+        "of",
+        "in",
+        "on",
+        "at",
+        "by",
+        "as",
+        "it",
+        "he",
+        "she",
+        "they",
+        "we",
+        "i",
+        "me",
+        "my",
+        "what",
+        "which",
+        "who",
+        "whom",
+        "when",
+        "where",
+        "why",
+        "how",
+        "about",
+        "into",
+        "over",
+        "under",
+        "only",
+        "just",
+        "then",
+        "than",
+        "there",
+        "here",
+        "also",
+        "other",
+        "more",
+        "most",
+        "some",
+        "any",
+        "all",
+        "each",
+        "few",
+        "both",
+        "once",
+        "new",
+        "need",
+        "needs",
+        "help",
+        "please",
+        "list",
+        "show",
+        "me",
+        "us",
+        "give",
+    ]
 )
 
 
@@ -55,8 +147,7 @@ class SkillError(ValueError):
 def _neutralize_markers(text: str) -> str:
     """Escape marker-shaped strings inside skill bodies so a body can never
     forge an extra <SKILL> section boundary."""
-    return (text.replace("</SKILL", "&lt;/SKILL")
-                .replace("<SKILL", "&lt;SKILL"))
+    return text.replace("</SKILL", "&lt;/SKILL").replace("<SKILL", "&lt;SKILL")
 
 
 def _parse_frontmatter(raw: str) -> tuple[dict[str, Any], str]:
@@ -71,7 +162,7 @@ def _parse_frontmatter(raw: str) -> tuple[dict[str, Any], str]:
             continue
         key, _, value = line.partition(":")
         meta[key.strip().lower()] = value.strip()
-    body = raw[m.end():].strip()
+    body = raw[m.end() :].strip()
     for required in ("name", "description"):
         if not meta.get(required):
             raise SkillError(f"frontmatter missing required field: {required!r}")
@@ -108,10 +199,8 @@ def _load_one(skill_dir: Path) -> Skill:
     meta, body = _parse_frontmatter(raw)
     name = str(meta["name"]).strip().lower()
     if not _NAME_RE.match(name):
-        raise SkillError(
-            f"skill name {name!r} is invalid (use lowercase letters, digits, hyphens)"
-        )
-    description = sanitize_text(str(meta["description"])).strip()[: _DESCRIPTION_CAP]
+        raise SkillError(f"skill name {name!r} is invalid (use lowercase letters, digits, hyphens)")
+    description = sanitize_text(str(meta["description"])).strip()[:_DESCRIPTION_CAP]
     version = str(meta.get("version") or "0.0.0").strip()
     resources = tuple(
         sorted(str(p.name) for p in skill_dir.iterdir() if p.is_file() and p.name != "SKILL.md")
@@ -182,8 +271,9 @@ def skill_names(root: str | Path | None = None) -> list[str]:
 # --------------------------------------------------------------------------- #
 # install / scaffold / suggest - the "coding agent" affordances
 # --------------------------------------------------------------------------- #
-def install_skill(src: str | Path, root: str | Path | None = None,
-                  overwrite: bool = False) -> Skill:
+def install_skill(
+    src: str | Path, root: str | Path | None = None, overwrite: bool = False
+) -> Skill:
     """Install a skill pack directory into the skills root (like a marketplace
     install): validates the pack, copies SKILL.md + resources, and returns the
     loaded Skill. Refuses to overwrite an existing pack unless `overwrite`."""
@@ -195,12 +285,13 @@ def install_skill(src: str | Path, root: str | Path | None = None,
     dest = base / skill.name
     if dest.exists() and not overwrite:
         raise SkillError(
-            f"skill {skill.name!r} already exists at {dest} "
-            f"(use overwrite=True to replace it)"
+            f"skill {skill.name!r} already exists at {dest} (use overwrite=True to replace it)"
         )
     total = 0
-    files = [src_dir / "SKILL.md", *sorted(p for p in src_dir.iterdir()
-                                           if p.is_file() and p.name != "SKILL.md")]
+    files = [
+        src_dir / "SKILL.md",
+        *sorted(p for p in src_dir.iterdir() if p.is_file() and p.name != "SKILL.md"),
+    ]
     for src_file in files:
         total += src_file.stat().st_size
         if total > _INSTALL_SIZE_CAP:
@@ -219,9 +310,7 @@ def scaffold_skill(name: str, description: str = "", root: str | Path | None = N
     auto-activated - the operator edits it and activates with /use)."""
     name = str(name).strip().lower()
     if not _NAME_RE.match(name):
-        raise SkillError(
-            f"skill name {name!r} is invalid (use lowercase letters, digits, hyphens)"
-        )
+        raise SkillError(f"skill name {name!r} is invalid (use lowercase letters, digits, hyphens)")
     base = Path(root or DEFAULT_SKILLS_ROOT)
     dest = base / name / "SKILL.md"
     if dest.exists():

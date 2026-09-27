@@ -1,4 +1,5 @@
 """Google Gemini provider (REST API - no extra SDK dependency)."""
+
 from __future__ import annotations
 
 import json

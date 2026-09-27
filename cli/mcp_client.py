@@ -31,11 +31,13 @@ Permission model (enforced by cli/middleware.py, not by the server):
 The SDK is async; this manager runs one asyncio loop on a daemon thread and
 keeps each server's session open on it, exposing a small sync API.
 """
+
 from __future__ import annotations
 
 import asyncio
 import contextlib
 import json
+import logging
 import os
 import re
 import threading
@@ -55,6 +57,7 @@ class MCPError(RuntimeError):
 def mcp_available() -> bool:
     try:
         import mcp  # noqa: F401
+
         return True
     except ImportError:
         return False
@@ -62,7 +65,16 @@ def mcp_available() -> bool:
 
 def _expand(value: Any) -> Any:
     if isinstance(value, str):
-        return _ENV_RE.sub(lambda m: os.environ.get(m.group(1), ""), value)
+
+        def _repl(m: re.Match[str]) -> str:
+            name = m.group(1)
+            if name not in os.environ:
+                logging.getLogger(__name__).warning(
+                    "MCP config references ${%s} which is not set - substituting ''", name
+                )
+            return os.environ.get(name, "")
+
+        return _ENV_RE.sub(_repl, value)
     if isinstance(value, list):
         return [_expand(v) for v in value]
     if isinstance(value, dict):
@@ -102,7 +114,7 @@ def tool_id(server: str, tool: str) -> str:
 def split_tool_id(name: str) -> tuple[str, str] | None:
     if not name.startswith(TOOL_PREFIX):
         return None
-    server, sep, tool = name[len(TOOL_PREFIX):].partition("__")
+    server, sep, tool = name[len(TOOL_PREFIX) :].partition("__")
     return (server, tool) if sep and server and tool else None
 
 
@@ -123,8 +135,11 @@ class MCPTool:
         if max_desc and len(desc) > max_desc:
             desc = desc[: max_desc - 1] + "…"
         tag = "READ" if self.read_only else "needs human approval"
-        return {"name": self.id, "description": f"[MCP {self.server} · {tag}] {desc}",
-                "input_schema": self.input_schema or {"type": "object", "properties": {}}}
+        return {
+            "name": self.id,
+            "description": f"[MCP {self.server} · {tag}] {desc}",
+            "input_schema": self.input_schema or {"type": "object", "properties": {}},
+        }
 
 
 @dataclass
@@ -149,7 +164,9 @@ class MCPManager:
     def _ensure_loop(self) -> asyncio.AbstractEventLoop:
         if self._loop is None:
             self._loop = asyncio.new_event_loop()
-            self._thread = threading.Thread(target=self._loop.run_forever, name="mcp-loop", daemon=True)
+            self._thread = threading.Thread(
+                target=self._loop.run_forever, name="mcp-loop", daemon=True
+            )
             self._thread.start()
         return self._loop
 
@@ -164,16 +181,24 @@ class MCPManager:
     # ------------------------------------------------------------ servers
     async def _open(self, srv: _Server) -> None:
         from mcp import ClientSession
+
         stack = contextlib.AsyncExitStack()
         spec = _expand(srv.spec)
         try:
             if spec.get("command"):
                 from mcp import StdioServerParameters
                 from mcp.client.stdio import stdio_client
+
                 env = {**os.environ, **(spec.get("env") or {})}
-                params = StdioServerParameters(command=spec["command"], args=list(spec.get("args") or []),
-                                               env=env, cwd=spec.get("cwd"))
-                devnull = stack.enter_context(open(os.devnull, "w"))  # keep server stderr off the REPL
+                params = StdioServerParameters(
+                    command=spec["command"],
+                    args=list(spec.get("args") or []),
+                    env=env,
+                    cwd=spec.get("cwd"),
+                )
+                devnull = stack.enter_context(
+                    open(os.devnull, "w")
+                )  # keep server stderr off the REPL
                 read, write = await stack.enter_async_context(stdio_client(params, errlog=devnull))
             else:
                 try:
@@ -181,7 +206,8 @@ class MCPManager:
                 except ImportError:
                     from mcp.client.streamable_http import streamable_http_client as http_client
                 streams = await stack.enter_async_context(
-                    http_client(spec["url"], headers=spec.get("headers") or None))
+                    http_client(spec["url"], headers=spec.get("headers") or None)
+                )
                 read, write = streams[0], streams[1]
             session = await stack.enter_async_context(ClientSession(read, write))
             await session.initialize()
@@ -196,8 +222,15 @@ class MCPManager:
             ann = getattr(t, "annotations", None)
             hinted = bool(getattr(ann, "readOnlyHint", False)) if ann else False
             schema = getattr(t, "inputSchema", None) or getattr(t, "input_schema", None) or {}
-            tools.append(MCPTool(server=srv.name, name=t.name, description=t.description or "",
-                                 input_schema=dict(schema), read_only=t.name in allow or (trust_hints and hinted)))
+            tools.append(
+                MCPTool(
+                    server=srv.name,
+                    name=t.name,
+                    description=t.description or "",
+                    input_schema=dict(schema),
+                    read_only=t.name in allow or (trust_hints and hinted),
+                )
+            )
         srv.stack, srv.session, srv.tools, srv.error = stack, session, tools, None
 
     def start(self, name: str) -> _Server:
@@ -279,9 +312,15 @@ class MCPManager:
                 parts.append(c.text)
             else:
                 parts.append(f"[{getattr(c, 'type', 'content')} omitted]")
-        structured = getattr(res, "structuredContent", None) or getattr(res, "structured_content", None)
-        out: dict[str, Any] = {"server": tool.server, "tool": tool.name, "is_error": bool(getattr(res, "isError", False)),
-                               "text": "\n".join(parts)}
+        structured = getattr(res, "structuredContent", None) or getattr(
+            res, "structured_content", None
+        )
+        out: dict[str, Any] = {
+            "server": tool.server,
+            "tool": tool.name,
+            "is_error": bool(getattr(res, "isError", False)),
+            "text": "\n".join(parts),
+        }
         if structured:
             out["structured"] = structured
         return out

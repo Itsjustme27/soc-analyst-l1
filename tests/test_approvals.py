@@ -4,6 +4,7 @@ from the security review and asserts it's now refused.
 
 Run: python -m unittest tests.test_approvals -v
 """
+
 from __future__ import annotations
 
 import os
@@ -27,20 +28,34 @@ class _TempStore(unittest.TestCase):
     def setUp(self):
         self.dir = tempfile.mkdtemp(prefix="approvals-test-")
         self.path = str(Path(self.dir) / "approvals.json")
-        self._orig = {k: getattr(cfg, k) for k in (
-            "APPROVAL_EXPIRY_SECONDS", "APPROVAL_EXECUTION_WINDOW_SECONDS",
-            "APPROVAL_BLOCK_SELF_APPROVAL", "APPROVAL_EXECUTE_MIN_APPROVERS",
-            "APPROVAL_PROPOSE_MIN_APPROVERS", "APPROVALS_PATH")}
+        self._orig = {
+            k: getattr(cfg, k)
+            for k in (
+                "APPROVAL_EXPIRY_SECONDS",
+                "APPROVAL_EXECUTION_WINDOW_SECONDS",
+                "APPROVAL_BLOCK_SELF_APPROVAL",
+                "APPROVAL_EXECUTE_MIN_APPROVERS",
+                "APPROVAL_PROPOSE_MIN_APPROVERS",
+                "APPROVALS_PATH",
+            )
+        }
 
     def tearDown(self):
         for k, v in self._orig.items():
             setattr(cfg, k, v)
         import shutil
+
         shutil.rmtree(self.dir, ignore_errors=True)
 
     def propose(self, action="create_wazuh_rule", permission="propose", user="alice"):
-        return approvals.create_proposal(action=action, reason="r", payload={"x": 1},
-                                         permission=permission, user=user, path=self.path)
+        return approvals.create_proposal(
+            action=action,
+            reason="r",
+            payload={"x": 1},
+            permission=permission,
+            user=user,
+            path=self.path,
+        )
 
 
 class TestLifecycle(_TempStore):
@@ -125,7 +140,7 @@ class TestExpiry(_TempStore):
         cfg.APPROVAL_EXECUTION_WINDOW_SECONDS = 0
         p = self.propose()
         approvals.approve(p["id"], "bob", path=self.path)
-        with mock.patch("approvals._now", return_value=time.time() + 10 ** 6):
+        with mock.patch("approvals._now", return_value=time.time() + 10**6):
             approvals.claim_for_execution(p["id"], "bob", path=self.path)
 
 
@@ -178,14 +193,18 @@ class TestEffectiveLevel(_TempStore):
 
     def test_check_can_run_uses_confirmed(self):
         from tools.base import PermissionDenied
+
         with self.assertRaises(PermissionDenied):
-            permissions.check_can_run("execute", "delete_wazuh_rule", approved=True, confirmed=False)
+            permissions.check_can_run(
+                "execute", "delete_wazuh_rule", approved=True, confirmed=False
+            )
         permissions.check_can_run("execute", "delete_wazuh_rule", approved=True, confirmed=True)
         with self.assertRaises(PermissionDenied):
             permissions.check_can_run("propose", "create_wazuh_rule", approved=False)
 
     def test_check_can_run_ignores_a_weaker_claimed_level(self):
         from tools.base import PermissionDenied
+
         with self.assertRaises(PermissionDenied):
             permissions.check_can_run("read", "delete_wazuh_rule", approved=True, confirmed=False)
 
@@ -193,9 +212,13 @@ class TestEffectiveLevel(_TempStore):
 class TestToolGate(unittest.TestCase):
     def test_non_approved_record_cannot_unlock_a_write(self):
         from tools.base import PermissionDenied, ToolContext
+
         for status in ("pending", "rejected", "expired", "executed", None):
-            ctx = ToolContext(wazuh=None, indexer=None,
-                              approval={"id": "x", "action": "create_wazuh_rule", "status": status})
+            ctx = ToolContext(
+                wazuh=None,
+                indexer=None,
+                approval={"id": "x", "action": "create_wazuh_rule", "status": status},
+            )
             with self.assertRaises(PermissionDenied, msg=str(status)):
                 ctx.approve_or_raise({"action": "create_wazuh_rule"})
 
@@ -204,6 +227,7 @@ class TestDashboardRoutes(_TempStore):
     def setUp(self):
         super().setUp()
         from dashboard import app
+
         app.config["TESTING"] = True
         self.client = app.test_client()
         cfg.APPROVALS_PATH = self.path
@@ -218,7 +242,10 @@ class TestDashboardRoutes(_TempStore):
         return self.client.post(url, json=json or {}, headers={"Authorization": f"Bearer {token}"})
 
     def test_unknown_token_is_401(self):
-        self.assertEqual(self.client.get("/api/proposals", headers={"Authorization": "Bearer nope"}).status_code, 401)
+        self.assertEqual(
+            self.client.get("/api/proposals", headers={"Authorization": "Bearer nope"}).status_code,
+            401,
+        )
 
     def test_client_supplied_by_is_ignored_for_verified_users(self):
         p = self.propose(user="alice")
@@ -270,6 +297,7 @@ class TestAuthDisabledApproval(_TempStore):
     def setUp(self):
         super().setUp()
         from dashboard import app
+
         app.config["TESTING"] = True
         self.client = app.test_client()
         cfg.APPROVALS_PATH = self.path
@@ -303,7 +331,8 @@ class TestAuthDisabledApproval(_TempStore):
     def test_execute_works_with_no_token_configured(self, reg):
         p = self.propose(user="alice")
         self.assertEqual(
-            self.client.post(f"/api/proposals/{p['id']}/approve", json={}).status_code, 200)
+            self.client.post(f"/api/proposals/{p['id']}/approve", json={}).status_code, 200
+        )
         r = self.client.post(f"/api/proposals/{p['id']}/execute", json={})
         self.assertEqual(r.status_code, 200, r.get_json())
         self.assertTrue(r.get_json()["ok"])
@@ -324,6 +353,7 @@ class TestAuthConfiguredStillEnforced(_TempStore):
     def setUp(self):
         super().setUp()
         from dashboard import app
+
         app.config["TESTING"] = True
         self.client = app.test_client()
         cfg.APPROVALS_PATH = self.path
@@ -336,8 +366,9 @@ class TestAuthConfiguredStillEnforced(_TempStore):
 
     def test_wrong_token_is_401_with_token_hint(self):
         p = self.propose(user="alice")
-        r = self.client.post(f"/api/proposals/{p['id']}/approve", json={},
-                             headers={"Authorization": "Bearer nope"})
+        r = self.client.post(
+            f"/api/proposals/{p['id']}/approve", json={}, headers={"Authorization": "Bearer nope"}
+        )
         self.assertEqual(r.status_code, 401)
         # must NOT claim auth is disabled - that is the confusing half of the old bug
         self.assertNotIn("auth is disabled", r.get_json()["error"])
@@ -345,7 +376,8 @@ class TestAuthConfiguredStillEnforced(_TempStore):
     def test_no_token_at_all_is_401(self):
         p = self.propose(user="alice")
         self.assertEqual(
-            self.client.post(f"/api/proposals/{p['id']}/approve", json={}).status_code, 401)
+            self.client.post(f"/api/proposals/{p['id']}/approve", json={}).status_code, 401
+        )
 
 
 class TestRoles(_TempStore):
@@ -354,14 +386,14 @@ class TestRoles(_TempStore):
     def setUp(self):
         super().setUp()
         from dashboard import app
+
         app.config["TESTING"] = True
         self.client = app.test_client()
         cfg.APPROVALS_PATH = self.path
         self._orig_auth = (cfg.DASHBOARD_TOKEN, cfg.DASHBOARD_USERS)
         # an entry with no explicit role stays an admin (back-compat)
         cfg.DASHBOARD_TOKEN = ""
-        cfg.DASHBOARD_USERS = ("alice:tokA:admin,bob:tokB:approver,"
-                               "carol:tokC:viewer")
+        cfg.DASHBOARD_USERS = "alice:tokA:admin,bob:tokB:approver,carol:tokC:viewer"
 
     def tearDown(self):
         cfg.DASHBOARD_TOKEN, cfg.DASHBOARD_USERS = self._orig_auth
@@ -387,15 +419,18 @@ class TestRoles(_TempStore):
 
     def test_admin_role_omitted_defaults_to_admin(self):
         from dashboard import _token_user
+
         with mock.patch("dashboard._supplied_token", return_value="tokA"):
             self.assertEqual(_token_user(), ("alice", "admin"))
 
     def test_viewer_can_still_read(self):
         self.assertEqual(
-            self.client.get("/api/rules", headers={"Authorization": "Bearer tokC"}).status_code, 200)
+            self.client.get("/api/rules", headers={"Authorization": "Bearer tokC"}).status_code, 200
+        )
 
     def test_unknown_role_falls_back_to_admin_not_bypass(self):
         from dashboard import _token_user
+
         cfg.DASHBOARD_USERS = "dave:tokD:superuser"
         with mock.patch("dashboard._supplied_token", return_value="tokD"):
             self.assertEqual(_token_user(), ("dave", "admin"))
@@ -417,8 +452,7 @@ class TestCancelTransition(_TempStore):
     def test_cancel_approved_is_the_point(self):
         p = self.propose()
         approvals.approve(p["id"], "bob", path=self.path)
-        out = approvals.cancel(p["id"], "bob", "superseded by a newer proposal",
-                               path=self.path)
+        out = approvals.cancel(p["id"], "bob", "superseded by a newer proposal", path=self.path)
         self.assertEqual(out["status"], "cancelled")
 
     def test_cancelled_proposal_cannot_be_claimed_or_executed(self):
@@ -450,13 +484,11 @@ class TestCancelTransition(_TempStore):
                 approvals.claim_for_execution(p["id"], "bob", path=self.path)
                 approvals.finish_execution(p["id"], ok=False, error="x", path=self.path)
             elif terminal == "expired":
-                with mock.patch.object(approvals, "_now",
-                                       return_value=approvals._now() + 10 ** 7):
+                with mock.patch.object(approvals, "_now", return_value=approvals._now() + 10**7):
                     approvals.list_proposals(path=self.path)
             elif terminal == "rejected":
                 approvals.reject(p["id"], "bob", path=self.path)
-            self.assertEqual(approvals.get_proposal(p["id"], path=self.path)["status"],
-                             terminal)
+            self.assertEqual(approvals.get_proposal(p["id"], path=self.path)["status"], terminal)
             with self.assertRaises(ValueError):
                 approvals.cancel(p["id"], "bob", path=self.path)
 
@@ -493,6 +525,7 @@ class TestProposalRouteRoles(_TempStore):
     def setUp(self):
         super().setUp()
         from dashboard import app
+
         app.config["TESTING"] = True
         self.client = app.test_client()
         cfg.APPROVALS_PATH = self.path
@@ -505,44 +538,39 @@ class TestProposalRouteRoles(_TempStore):
         super().tearDown()
 
     def post_as(self, token, url, payload=None):
-        return self.client.post(url, json=payload or {},
-                                headers={"Authorization": f"Bearer {token}"})
+        return self.client.post(
+            url, json=payload or {}, headers={"Authorization": f"Bearer {token}"}
+        )
 
     def test_viewer_cannot_approve(self):
         p = self.propose()
         r = self.post_as("tokC", f"/api/proposals/{p['id']}/approve")
         self.assertEqual(r.status_code, 403, r.get_json())
-        self.assertEqual(approvals.get_proposal(p["id"], path=self.path)["status"],
-                         "pending")
+        self.assertEqual(approvals.get_proposal(p["id"], path=self.path)["status"], "pending")
 
     def test_viewer_cannot_reject(self):
         p = self.propose()
         r = self.post_as("tokC", f"/api/proposals/{p['id']}/reject")
         self.assertEqual(r.status_code, 403, r.get_json())
-        self.assertEqual(approvals.get_proposal(p["id"], path=self.path)["status"],
-                         "pending")
+        self.assertEqual(approvals.get_proposal(p["id"], path=self.path)["status"], "pending")
 
     def test_viewer_cannot_cancel(self):
         p = self.propose()
         r = self.post_as("tokC", f"/api/proposals/{p['id']}/cancel", {"reason": "no"})
         self.assertEqual(r.status_code, 403, r.get_json())
-        self.assertEqual(approvals.get_proposal(p["id"], path=self.path)["status"],
-                         "pending")
+        self.assertEqual(approvals.get_proposal(p["id"], path=self.path)["status"], "pending")
 
     def test_viewer_cannot_execute(self):
         p = self.propose()
         approvals.approve(p["id"], "bob", path=self.path)
         r = self.post_as("tokC", f"/api/proposals/{p['id']}/execute", {"confirm": True})
         self.assertEqual(r.status_code, 403, r.get_json())
-        self.assertEqual(approvals.get_proposal(p["id"], path=self.path)["status"],
-                         "approved")
+        self.assertEqual(approvals.get_proposal(p["id"], path=self.path)["status"], "approved")
 
     def test_approver_can_approve_and_cancel(self):
         p = self.propose()
-        self.assertEqual(
-            self.post_as("tokB", f"/api/proposals/{p['id']}/approve").status_code, 200)
-        r = self.post_as("tokB", f"/api/proposals/{p['id']}/cancel",
-                         {"reason": "changed my mind"})
+        self.assertEqual(self.post_as("tokB", f"/api/proposals/{p['id']}/approve").status_code, 200)
+        r = self.post_as("tokB", f"/api/proposals/{p['id']}/cancel", {"reason": "changed my mind"})
         self.assertEqual(r.status_code, 200, r.get_json())
         body = r.get_json()["proposal"]
         self.assertEqual(body["status"], "cancelled")

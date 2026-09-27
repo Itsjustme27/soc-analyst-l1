@@ -4,7 +4,9 @@ One-time (or re-run anytime) ingestion of seed_data/playbooks into the
 
 Usage: python scripts_ingest_seed.py
 """
+
 from pathlib import Path
+
 from rag.knowledge_base import KnowledgeBase
 
 PLAYBOOK_DIR = Path(__file__).parent / "seed_data" / "playbooks"

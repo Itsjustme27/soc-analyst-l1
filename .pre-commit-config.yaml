@@ -1,0 +1,36 @@
+# Pre-commit hooks (dev-only). Install with `venv/bin/pip install pre-commit`
+# then `venv/bin/pre-commit install`. None of these are runtime dependencies.
+repos:
+  - repo: https://github.com/astral-sh/ruff-pre-commit
+    rev: v0.6.9
+    hooks:
+      - id: ruff
+        args: [--fix, --exit-non-zero-on-fix]
+      - id: ruff-format
+
+  - repo: https://github.com/pre-commit/pre-commit-hooks
+    rev: v4.6.0
+    hooks:
+      - id: trailing-whitespace
+      - id: end-of-file-fixer
+      - id: check-yaml
+      - id: check-json
+      - id: check-added-large-files
+        args: ["--maxkb=1024"]
+      - id: check-merge-conflict
+      - id: detect-private-key
+
+  - repo: https://github.com/PyCQA/bandit
+    rev: 1.7.9
+    hooks:
+      - id: bandit
+        args: [-q, -lll, -r, agent, cli, connectors, llm, rag, tools, dashboard.py, approvals.py, permissions.py, approval_executor.py, audit.py, config.py]
+
+  - repo: local
+    hooks:
+      - id: env-example-drift
+        name: .env.example drift check
+        entry: python scripts/check_env_example_sync.py
+        language: system
+        files: ^(config\.py|\.env\.example)$
+        pass_filenames: false

@@ -19,19 +19,19 @@ Package layout:
                        gates + the audit log.
 """
 
-from tools.base import (
-    Permission,
-    PermissionDenied,
-    ToolContext,
-    ToolError,
-    ToolParamError,
-    ApprovalRequired,
-)
 from tools.api_client import (
     WazuhAPIError,
     WazuhAPINotConfigured,
     WazuhAuthError,
     WazuhManagerAPI,
+)
+from tools.base import (
+    ApprovalRequired,
+    Permission,
+    PermissionDenied,
+    ToolContext,
+    ToolError,
+    ToolParamError,
 )
 from tools.indexer_client import IndexerClient
 

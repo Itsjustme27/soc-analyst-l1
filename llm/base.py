@@ -18,6 +18,7 @@ Tool definitions are kept in one canonical shape across providers:
 Each provider translates that canonical shape (and the messages above) into
 its own wire format and back.
 """
+
 from __future__ import annotations
 
 import json
@@ -60,8 +61,14 @@ class LLMRateLimitedError(LLMError):
     (including a Retry-After value when the gateway supplied one).
     """
 
-    def __init__(self, message: str, *, status: int = 429, retry_after: float | None = None,
-                 request_id: str | None = None):
+    def __init__(
+        self,
+        message: str,
+        *,
+        status: int = 429,
+        retry_after: float | None = None,
+        request_id: str | None = None,
+    ):
         super().__init__(message)
         self.status = status
         self.retry_after = retry_after

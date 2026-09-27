@@ -15,6 +15,7 @@ Every call is also appended to `data/notifications.jsonl` regardless of
 whether NOTIFY_WEBHOOK_URL is set, so there's always a local audit trail even
 before a webhook is wired up (mirrors data/triage_log.jsonl's role).
 """
+
 from __future__ import annotations
 
 import json
@@ -40,7 +41,9 @@ def _append_log(entry: dict[str, Any]) -> None:
         f.write(json.dumps(entry, default=str) + "\n")
 
 
-def send_notification(text: str, *, target: str = "", extra: dict[str, Any] | None = None) -> dict[str, Any]:
+def send_notification(
+    text: str, *, target: str = "", extra: dict[str, Any] | None = None
+) -> dict[str, Any]:
     """Send one notification. Never raises - a broken webhook must never take
     down triage. Always logs locally; only actually POSTs if a webhook URL is
     configured. Returns {"ok": bool, "sent": bool, "detail": str}."""
@@ -53,7 +56,11 @@ def send_notification(text: str, *, target: str = "", extra: dict[str, Any] | No
 
     webhook_url = getattr(cfg, "NOTIFY_WEBHOOK_URL", "")
     if not webhook_url:
-        result = {"ok": True, "sent": False, "detail": "NOTIFY_WEBHOOK_URL not set - logged locally only."}
+        result = {
+            "ok": True,
+            "sent": False,
+            "detail": "NOTIFY_WEBHOOK_URL not set - logged locally only.",
+        }
         _append_log({**entry, "result": result})
         return result
 
@@ -73,7 +80,9 @@ def send_notification(text: str, *, target: str = "", extra: dict[str, Any] | No
     return result
 
 
-def notify_rule_matches(alert: dict[str, Any], rule_matches: list[dict[str, Any]]) -> list[dict[str, Any]]:
+def notify_rule_matches(
+    alert: dict[str, Any], rule_matches: list[dict[str, Any]]
+) -> list[dict[str, Any]]:
     """Convenience wrapper for the triage call sites: fires one notification
     per triggered rule whose action.notify is set, and returns the results
     (mainly for tests/debugging - callers don't need to do anything with them)."""
@@ -90,5 +99,9 @@ def notify_rule_matches(alert: dict[str, Any], rule_matches: list[dict[str, Any]
         text = f"Rule '{match.get('name')}' triggered on {alert_id} ({alert_name})"
         if tag:
             text += f" - tag: {tag}"
-        results.append(send_notification(text, target=target, extra={"alert_id": alert_id, "rule_id": match.get("rule_id")}))
+        results.append(
+            send_notification(
+                text, target=target, extra={"alert_id": alert_id, "rule_id": match.get("rule_id")}
+            )
+        )
     return results

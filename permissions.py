@@ -17,6 +17,7 @@ means, for effective_level() (what a proposed action REALLY needs - a caller
 can never downgrade a delete to 'propose'), and for check_can_run() which the
 execute path calls before running anything.
 """
+
 from __future__ import annotations
 
 from tools.base import Permission, PermissionDenied
@@ -45,15 +46,37 @@ CONFIRM_REQUIRED_ACTIONS = (
 
 # Actions that sound like reads and are safe to execute immediately.
 _READ_PREFIXES = (
-    "get_", "list_", "search_", "find_", "show_", "verify_", "check_",
-    "describe_", "fetch_", "tail_", "read_", "run_", "test_", "count_",
-    "evaluate_", "preview_",
+    "get_",
+    "list_",
+    "search_",
+    "find_",
+    "show_",
+    "verify_",
+    "check_",
+    "describe_",
+    "fetch_",
+    "tail_",
+    "read_",
+    "run_",
+    "test_",
+    "count_",
+    "evaluate_",
+    "preview_",
 )
 
 # Actions that are by definition writes (PROPOSE band).
 _WRITE_PREFIXES = (
-    "create_", "update_", "append_", "write_", "set_", "enable_", "save_",
-    "import_", "install_", "design_", "generate_",
+    "create_",
+    "update_",
+    "append_",
+    "write_",
+    "set_",
+    "enable_",
+    "save_",
+    "import_",
+    "install_",
+    "design_",
+    "generate_",
 )
 
 
@@ -102,8 +125,9 @@ def describe(level: Permission | str) -> str:
     return level.label
 
 
-def check_can_run(permission: Permission | str, action: str, *,
-                  approved: bool = False, confirmed: bool = False) -> None:
+def check_can_run(
+    permission: Permission | str, action: str, *, approved: bool = False, confirmed: bool = False
+) -> None:
     """Server-side gate for executions. `approved` is whether the action has
     an approved proposal; `confirmed` is the extra confirmation an operator
     gives in the UI for high-risk actions. Raises PermissionDenied when

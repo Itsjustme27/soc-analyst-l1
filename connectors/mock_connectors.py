@@ -5,7 +5,9 @@ Drop-in replacements used when MOCK_MODE=true.
   It returns canned alerts and event history instead of hitting a live SIEM.
 - MockCrowdStrikeConnector stubs the EDR enrichment side.
 """
+
 from __future__ import annotations
+
 from typing import Any
 
 
@@ -34,7 +36,10 @@ class MockCrowdStrikeConnector:
             "process_id": falcon_process_id,
             "process_name": "powershell.exe",
             "command_line": "powershell.exe -enc JABjAGwAaQBlAG4AdAAgAD0A...(base64, decodes to a download cradle)",
-            "parent": {"process_name": "WINWORD.EXE", "command_line": "WINWORD.EXE /n \"Invoice_2691.docm\""},
+            "parent": {
+                "process_name": "WINWORD.EXE",
+                "command_line": 'WINWORD.EXE /n "Invoice_2691.docm"',
+            },
             "children": [],
             "file_hash_sha256": "3fa1c2...mockhash...9e21",
             "hash_reputation": "unknown - not previously seen in VT",

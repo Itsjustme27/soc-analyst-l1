@@ -1,6 +1,16 @@
 # SOC L1 Triage Agent
 
+![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)
+[![Python 3.11-3.13](https://img.shields.io/badge/Python-3.11_|_3.12_|_3.13-blue.svg)](#setup)
+[![CI](https://github.com/sabangiri7/soc-analyst-l1/actions/workflows/ci.yml/badge.svg)](https://github.com/sabangiri7/soc-analyst-l1/actions/workflows/ci.yml)
+[![CodeQL](https://github.com/sabangiri7/soc-analyst-l1/actions/workflows/codeql.yml/badge.svg)](https://github.com/sabangiri7/soc-analyst-l1/actions/workflows/codeql.yml)
+[![PRs welcome](https://img.shields.io/badge/PRs-welcome-brightgreen.svg)](CONTRIBUTING.md)
+
 **An agentic L1 SOC analyst that triages alerts from any major SIEM, enriches with CrowdStrike, cites its reasoning, and learns from analyst corrections — all running on your own machine.**
+
+> **Reuse notice:** this repository is licensed MIT, but the maintainer requires
+> **written permission for any reuse** beyond this project (forks, derivatives,
+> commercial use). See [License & reuse](#license--reuse) at the bottom.
 
 ---
 
@@ -602,3 +612,30 @@ Two related gotchas this toolchain hit for real:
 
 - **`<if_matched_sid>` and `<same_source_ip/>` must be child elements** on a Wazuh 4.x build. The attribute form (`if_matched_sid="5710,5760" same_source_ip="yes"`) is rejected by the manager with `1113: XML syntax error`.
 - **Wazuh already ships an SSH brute-force rule.** `5763` (*"sshd: brute force trying to get access to the system"*) fires on repeated `Failed password` from one source IP. A custom rule is a deliberate threshold/scope choice and will overlap with it — check the stock rule before tuning your own, and expect duplicate alerts if both match.
+
+## License & reuse
+
+The repository is licensed under the **MIT License** (see `LICENSE`). **In
+addition** to the MIT terms, the maintainer requires **written permission
+for any reuse** of this code:
+
+- public forks published outside this project,
+- derivative products or services built on it,
+- inclusion in other repositories or commercial offerings.
+
+If you want to build on this code, contact the maintainer first (open an
+issue or reach out directly). Unapproved reuse will be treated as a
+violation of this policy. Contributing back fixes or improvements to this
+repository is always welcome — see `CONTRIBUTING.md`.
+
+## Security
+
+- The dashboard is **auth-less by default** and treats every request as
+  local-trust admin. That is safe only while bound to `127.0.0.1`. Set
+  `DASHBOARD_TOKEN` (and optionally per-user `DASHBOARD_USERS`) **before**
+  binding `--host` to anything else — see `.env.example`.
+- The AI SOC Engineer operates behind a READ/PROPOSE/EXECUTE approval model;
+  every tool call is audited and tool results are untrusted data.
+- Report vulnerabilities per `SECURITY.md` (private, never a public issue).
+- The 2026-09-27 security audit — findings, fixes, residual risk — lives in
+  [`docs/AUDIT-2026-09-27.md`](docs/AUDIT-2026-09-27.md).

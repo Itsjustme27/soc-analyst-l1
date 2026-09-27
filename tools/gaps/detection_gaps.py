@@ -25,6 +25,7 @@ Queries are built as deterministic bool clauses (term / match_phrase) - never
 query_string, whose special characters (/, <, =, ..) crash older Elasticsearch
 parsers with 500s.
 """
+
 from __future__ import annotations
 
 from typing import Any
@@ -39,70 +40,126 @@ _ARCHIVE = "wazuh-archives-*"
 #             must: [(field, value)] exact-term filters, should: [(match|phrase, text)]}
 _CATEGORIES: dict[str, list[dict[str, Any]]] = {
     "web": [
-        {"name": "probes_scanning", "key": "possible web scanning/probing",
-         "rule": "scan|probe|cgi-bin|masscan|nikto|sqlmap",
-         "must": [("rule.groups", "web")],
-         "should": [("phrase", "scan"), ("phrase", "probe"), ("phrase", "cgi-bin")]},
-        {"name": "sql_injection", "key": "SQL injection",
-         "rule": "sql injection|union select|sqlmap|or 1=1|sqli",
-         "must": [("rule.groups", "web")],
-         "should": [("phrase", "SQL injection"), ("phrase", "union select"),
-                    ("term", "sqlmap"), ("phrase", "1=1")]},
-        {"name": "xss", "key": "cross-site scripting (XSS)",
-         "rule": "cross site|xss|<script|javascript:",
-         "must": [("rule.groups", "web")],
-         "should": [("phrase", "cross site"), ("term", "xss"), ("phrase", "<script")]},
-        {"name": "path_traversal_lfi", "key": "path traversal / LFI",
-         "rule": "path traversal|../|lfi|directory traversal",
-         "must": [("rule.groups", "web")],
-         "should": [("phrase", "path traversal"), ("phrase", "../"), ("phrase", "..\\\\")]},
-        {"name": "sensitive_urls", "key": "access to sensitive URLs",
-         "rule": "admin|\\.env|wp-admin|\\.git|config.php|phpinfo",
-         "must": [("rule.groups", "web")],
-         "should": [("phrase", "/admin"), ("phrase", "/.env"), ("phrase", "/wp-admin"),
-                    ("phrase", "/.git")]},
-        {"name": "login_bruteforce", "key": "web login brute force",
-         "rule": "brute force|bruteforce|authentication failure|access denied",
-         "must": [("rule.groups", "web")],
-         "should": [("term", "brute"), ("phrase", "access denied"), ("term", "401")]},
-        {"name": "log4j_jndi", "key": "Log4Shell / JNDI injection",
-         "rule": "log4j|jndi:|log4shell",
-         "must": [("rule.groups", "web")],
-         "should": [("term", "jndi"), ("term", "log4j"), ("term", "log4shell")]},
-        {"name": "webshell_upload", "key": "webshell / RCE attempts",
-         "rule": r"webshell|shell[.]php|cmd=.+[.]php|uploads[.]php|base64_decode",
-         "must": [("rule.groups", "web")],
-         "should": [("term", "webshell"), ("phrase", "shell.php"), ("term", "cmd=")]},
+        {
+            "name": "probes_scanning",
+            "key": "possible web scanning/probing",
+            "rule": "scan|probe|cgi-bin|masscan|nikto|sqlmap",
+            "must": [("rule.groups", "web")],
+            "should": [("phrase", "scan"), ("phrase", "probe"), ("phrase", "cgi-bin")],
+        },
+        {
+            "name": "sql_injection",
+            "key": "SQL injection",
+            "rule": "sql injection|union select|sqlmap|or 1=1|sqli",
+            "must": [("rule.groups", "web")],
+            "should": [
+                ("phrase", "SQL injection"),
+                ("phrase", "union select"),
+                ("term", "sqlmap"),
+                ("phrase", "1=1"),
+            ],
+        },
+        {
+            "name": "xss",
+            "key": "cross-site scripting (XSS)",
+            "rule": "cross site|xss|<script|javascript:",
+            "must": [("rule.groups", "web")],
+            "should": [("phrase", "cross site"), ("term", "xss"), ("phrase", "<script")],
+        },
+        {
+            "name": "path_traversal_lfi",
+            "key": "path traversal / LFI",
+            "rule": "path traversal|../|lfi|directory traversal",
+            "must": [("rule.groups", "web")],
+            "should": [("phrase", "path traversal"), ("phrase", "../"), ("phrase", "..\\\\")],
+        },
+        {
+            "name": "sensitive_urls",
+            "key": "access to sensitive URLs",
+            "rule": "admin|\\.env|wp-admin|\\.git|config.php|phpinfo",
+            "must": [("rule.groups", "web")],
+            "should": [
+                ("phrase", "/admin"),
+                ("phrase", "/.env"),
+                ("phrase", "/wp-admin"),
+                ("phrase", "/.git"),
+            ],
+        },
+        {
+            "name": "login_bruteforce",
+            "key": "web login brute force",
+            "rule": "brute force|bruteforce|authentication failure|access denied",
+            "must": [("rule.groups", "web")],
+            "should": [("term", "brute"), ("phrase", "access denied"), ("term", "401")],
+        },
+        {
+            "name": "log4j_jndi",
+            "key": "Log4Shell / JNDI injection",
+            "rule": "log4j|jndi:|log4shell",
+            "must": [("rule.groups", "web")],
+            "should": [("term", "jndi"), ("term", "log4j"), ("term", "log4shell")],
+        },
+        {
+            "name": "webshell_upload",
+            "key": "webshell / RCE attempts",
+            "rule": r"webshell|shell[.]php|cmd=.+[.]php|uploads[.]php|base64_decode",
+            "must": [("rule.groups", "web")],
+            "should": [("term", "webshell"), ("phrase", "shell.php"), ("term", "cmd=")],
+        },
     ],
     "ssh": [
-        {"name": "ssh_bruteforce", "key": "SSH brute force",
-         "rule": "sshd: brute force|authentication failure|failed password|breakin",
-         "must": [("rule.groups", "authentication_failures")],
-         "should": [("phrase", "brute force"), ("phrase", "authentication failure"),
-                    ("phrase", "failed password")]},
-        {"name": "ssh_oddusers", "key": "SSH unknown-user abuse",
-         "rule": "non-existent user|invalid user|useless sshd|unknown user",
-         "must": [("rule.groups", "authentication_failures")],
-         "should": [("phrase", "invalid user"), ("phrase", "non-existent user")]},
-        {"name": "ssh_exploits", "key": "SSH exploit attempts",
-         "rule": "openssh exploit|crc|challenge-response|corrupted bytes|ssh vulnerability",
-         "must": [("rule.groups", "authentication_failures")],
-         "should": [("term", "openssh"), ("phrase", "challenge-response"),
-                    ("phrase", "corrupted bytes")]},
+        {
+            "name": "ssh_bruteforce",
+            "key": "SSH brute force",
+            "rule": "sshd: brute force|authentication failure|failed password|breakin",
+            "must": [("rule.groups", "authentication_failures")],
+            "should": [
+                ("phrase", "brute force"),
+                ("phrase", "authentication failure"),
+                ("phrase", "failed password"),
+            ],
+        },
+        {
+            "name": "ssh_oddusers",
+            "key": "SSH unknown-user abuse",
+            "rule": "non-existent user|invalid user|useless sshd|unknown user",
+            "must": [("rule.groups", "authentication_failures")],
+            "should": [("phrase", "invalid user"), ("phrase", "non-existent user")],
+        },
+        {
+            "name": "ssh_exploits",
+            "key": "SSH exploit attempts",
+            "rule": "openssh exploit|crc|challenge-response|corrupted bytes|ssh vulnerability",
+            "must": [("rule.groups", "authentication_failures")],
+            "should": [
+                ("term", "openssh"),
+                ("phrase", "challenge-response"),
+                ("phrase", "corrupted bytes"),
+            ],
+        },
     ],
     "network": [
-        {"name": "port_scan", "key": "network scans",
-         "rule": "port scan|nmap|possible scan|multiple ports",
-         "must": [("rule.groups", "attack")],
-         "should": [("phrase", "port scan"), ("phrase", "possible scan"), ("term", "nmap")]},
-        {"name": "recon_udp", "key": "UDP recon / sweep",
-         "rule": "udp reconnaissance|recon|arp|suspicious udp",
-         "must": [("rule.groups", "attack")],
-         "should": [("term", "recon"), ("phrase", "suspicious udp")]},
-        {"name": "malware_c2", "key": "C2 / malware comms",
-         "rule": "backdoor|trojan|c2|command and control|botnet|malware",
-         "must": [("rule.groups", "attack")],
-         "should": [("term", "backdoor"), ("phrase", "command and control"), ("term", "botnet")]},
+        {
+            "name": "port_scan",
+            "key": "network scans",
+            "rule": "port scan|nmap|possible scan|multiple ports",
+            "must": [("rule.groups", "attack")],
+            "should": [("phrase", "port scan"), ("phrase", "possible scan"), ("term", "nmap")],
+        },
+        {
+            "name": "recon_udp",
+            "key": "UDP recon / sweep",
+            "rule": "udp reconnaissance|recon|arp|suspicious udp",
+            "must": [("rule.groups", "attack")],
+            "should": [("term", "recon"), ("phrase", "suspicious udp")],
+        },
+        {
+            "name": "malware_c2",
+            "key": "C2 / malware comms",
+            "rule": "backdoor|trojan|c2|command and control|botnet|malware",
+            "must": [("rule.groups", "attack")],
+            "should": [("term", "backdoor"), ("phrase", "command and control"), ("term", "botnet")],
+        },
     ],
 }
 
@@ -128,14 +185,16 @@ def _load_rules(ctx: ToolContext) -> list[dict[str, Any]]:
 
 def _rule_blob(item: dict[str, Any]) -> str:
     det = item.get("details") or {}
-    return " ".join(str(v) for v in (
-        item.get("description"), " ".join(item.get("groups") or []), det))
+    return " ".join(
+        str(v) for v in (item.get("description"), " ".join(item.get("groups") or []), det)
+    )
 
 
 def _match_rules(rules: list[dict[str, Any]], terms: str) -> int:
     """Count distinct rules whose description/groups/details match the regex
     terms (local matching - the API `search` param is literal, not regex)."""
     import re
+
     try:
         prog = re.compile(terms, re.IGNORECASE)
     except re.error:
@@ -145,20 +204,38 @@ def _match_rules(rules: list[dict[str, Any]], terms: str) -> int:
 
 def _count(ctx: ToolContext, index: str, spec: dict[str, Any], time_range: str) -> int:
     """Structured bool count - no query_string parser involved."""
-    must: list[dict[str, Any]] = [{"range": {"timestamp": {"gte": to_range_expr(time_range) or "now-24h"}}}]
+    must: list[dict[str, Any]] = [
+        {"range": {"timestamp": {"gte": to_range_expr(time_range) or "now-24h"}}}
+    ]
     must += [{"term": {field: value}} for field, value in spec.get("must", [])]
     should: list[dict[str, Any]] = []
     for kind, text in spec.get("should", []):
         if kind == "term":
-            should.append({"multi_match": {"query": text, "fields": ["full_log", "rule.description"],
-                                           "type": "cross_fields", "operator": "and"}})
+            should.append(
+                {
+                    "multi_match": {
+                        "query": text,
+                        "fields": ["full_log", "rule.description"],
+                        "type": "cross_fields",
+                        "operator": "and",
+                    }
+                }
+            )
         else:  # phrase
-            should.append({"multi_match": {"query": text, "fields": ["full_log", "rule.description"],
-                                           "type": "phrase"}})
+            should.append(
+                {
+                    "multi_match": {
+                        "query": text,
+                        "fields": ["full_log", "rule.description"],
+                        "type": "phrase",
+                    }
+                }
+            )
     body: dict[str, Any] = {"size": 0}
     if should:
-        query: dict[str, Any] = {"bool": {"must": must,
-                                          "should": should, "minimum_should_match": 1}}
+        query: dict[str, Any] = {
+            "bool": {"must": must, "should": should, "minimum_should_match": 1}
+        }
     else:
         query = {"bool": {"must": must}}
     body["query"] = query
@@ -183,11 +260,13 @@ def _classify(rules: int, alerts: int, events: int) -> str:
 
 class AnalyzeDetectionGaps(BaseWazuhTool):
     name = "analyze_detection_gaps"
-    description = ("Factual detection-gap analysis: for each attack category (web / ssh / network) "
-                   "build a 5-state coverage table using the real manager ruleset and the real "
-                   "indexer - detected / partial / covered_no_events / gap / unknown. The gap and "
-                   "partial rows are candidate detections to develop. Use for 'find detection gaps "
-                   "in my web server telemetry'.")
+    description = (
+        "Factual detection-gap analysis: for each attack category (web / ssh / network) "
+        "build a 5-state coverage table using the real manager ruleset and the real "
+        "indexer - detected / partial / covered_no_events / gap / unknown. The gap and "
+        "partial rows are candidate detections to develop. Use for 'find detection gaps "
+        "in my web server telemetry'."
+    )
     input_schema = {
         "type": "object",
         "properties": {
@@ -212,14 +291,16 @@ class AnalyzeDetectionGaps(BaseWazuhTool):
             rules = _match_rules(ruleset, cat["rule"])
             alerts = _count(ctx, _INDEX, cat, time_range)
             events = _count(ctx, _ARCHIVE, cat, time_range)
-            rows.append({
-                "category": cat["name"],
-                "key": cat["key"],
-                "state": _classify(rules, alerts, events),
-                "rules": rules,
-                "alerts_seen": max(alerts, 0),
-                "raw_events_seen": max(events, 0),
-            })
+            rows.append(
+                {
+                    "category": cat["name"],
+                    "key": cat["key"],
+                    "state": _classify(rules, alerts, events),
+                    "rules": rules,
+                    "alerts_seen": max(alerts, 0),
+                    "raw_events_seen": max(events, 0),
+                }
+            )
 
         gaps = [r for r in rows if r["state"] in ("gap", "partial")]
         return {

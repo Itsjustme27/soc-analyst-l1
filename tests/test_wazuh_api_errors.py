@@ -12,6 +12,7 @@ claim_for_execution() is single-use the proposal could never be retried.
 
 Run: python -m unittest tests.test_wazuh_api_errors -v
 """
+
 from __future__ import annotations
 
 import os
@@ -29,9 +30,14 @@ REJECTED = {
         "total_affected_items": 0,
         "total_failed_items": 1,
         "failed_items": [
-            {"error": {"code": 1113, "message": "XML syntax error",
-                       "remediation": "Please, ensure file content has correct XML"},
-             "id": ["etc/rules/local_rules.xml"]},
+            {
+                "error": {
+                    "code": 1113,
+                    "message": "XML syntax error",
+                    "remediation": "Please, ensure file content has correct XML",
+                },
+                "id": ["etc/rules/local_rules.xml"],
+            },
         ],
     },
     "message": "Could not upload rule",
@@ -39,8 +45,12 @@ REJECTED = {
 }
 
 ACCEPTED = {
-    "data": {"affected_items": ["etc/rules/local_rules.xml"],
-             "total_affected_items": 1, "total_failed_items": 0, "failed_items": []},
+    "data": {
+        "affected_items": ["etc/rules/local_rules.xml"],
+        "total_affected_items": 1,
+        "total_failed_items": 0,
+        "failed_items": [],
+    },
     "message": "Rule was successfully uploaded",
     "error": 0,
 }
@@ -63,8 +73,10 @@ class TestRaiseForInbodyError(unittest.TestCase):
         self.assertIs(raise_for_inbody_error(resp, "x"), resp)
 
     def test_failed_items_alone_triggers_even_if_counter_absent(self):
-        resp = {"data": {"failed_items": REJECTED["data"]["failed_items"]},
-                "message": "Could not upload rule"}
+        resp = {
+            "data": {"failed_items": REJECTED["data"]["failed_items"]},
+            "message": "Could not upload rule",
+        }
         with self.assertRaises(WazuhAPIError):
             raise_for_inbody_error(resp, "x")
 
@@ -88,6 +100,7 @@ class TestWriteHelpersEnforceIt(unittest.TestCase):
 
     def _api(self, resp):
         from tools.api_client import WazuhManagerAPI
+
         api = WazuhManagerAPI.__new__(WazuhManagerAPI)  # bypass __init__/auth
         api.put = lambda *a, **k: resp
         api.post = lambda *a, **k: resp
@@ -107,8 +120,7 @@ class TestWriteHelpersEnforceIt(unittest.TestCase):
             self._api(REJECTED).delete_rule(200001)
 
     def test_put_rules_file_returns_on_success(self):
-        self.assertEqual(self._api(ACCEPTED).put_rules_file("local_rules.xml", "x"),
-                         ACCEPTED)
+        self.assertEqual(self._api(ACCEPTED).put_rules_file("local_rules.xml", "x"), ACCEPTED)
 
 
 if __name__ == "__main__":

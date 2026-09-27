@@ -6,6 +6,7 @@ fully offline via the hashing embedding (MOCK_MODE).
 
 Run: cd soc-agent && MOCK_MODE=true python3 -m unittest tests.test_rag_rules -v
 """
+
 from __future__ import annotations
 
 import os
@@ -18,8 +19,16 @@ os.environ.setdefault("MOCK_MODE", "true")
 os.environ.setdefault("LLM_PROVIDER", "mock")
 
 
-def _rule(rid, level=5, groups=("syslog", "sshd"), filename="local_rules.xml",
-          status="enabled", mitre=None, details=None, desc=None):
+def _rule(
+    rid,
+    level=5,
+    groups=("syslog", "sshd"),
+    filename="local_rules.xml",
+    status="enabled",
+    mitre=None,
+    details=None,
+    desc=None,
+):
     return {
         "id": rid,
         "level": level,
@@ -39,13 +48,28 @@ class FakeManagerRulesAPI:
         self.rules = rules
         self.calls = []
 
-    def get_rules(self, limit=50, offset=0, search=None, group=None,
-                  filename=None, level=None, status=None, sort=None, q=None):
-        self.calls.append({
-            "limit": limit, "offset": offset, "search": search,
-            "group": group, "filename": filename,
-        })
-        batch = self.rules[offset:offset + limit]
+    def get_rules(
+        self,
+        limit=50,
+        offset=0,
+        search=None,
+        group=None,
+        filename=None,
+        level=None,
+        status=None,
+        sort=None,
+        q=None,
+    ):
+        self.calls.append(
+            {
+                "limit": limit,
+                "offset": offset,
+                "search": search,
+                "group": group,
+                "filename": filename,
+            }
+        )
+        batch = self.rules[offset : offset + limit]
         return {
             "data": {
                 "affected_items": batch,
@@ -78,26 +102,35 @@ class KbTestCase(unittest.TestCase):
     def setUp(self):
         self.tmp = tempfile.mkdtemp(prefix="rag-rules-test-")
         from config import cfg
+
         self._orig = cfg.CHROMA_DB_PATH
         cfg.CHROMA_DB_PATH = self.tmp
 
     def tearDown(self):
         from config import cfg
+
         cfg.CHROMA_DB_PATH = self._orig
         shutil.rmtree(self.tmp, ignore_errors=True)
 
     def _kb(self):
         from rag.knowledge_base import KnowledgeBase
+
         return KnowledgeBase()
 
 
 class TestBuildRuleDoc(unittest.TestCase):
     def test_renders_core_fields(self):
         from rag.rules_ingest import build_rule_doc
-        doc = build_rule_doc(_rule(100002, level=7,
-                                   mitre=[{"id": "T1110", "name": "Brute Force"}],
-                                   details={"frequency": 12, "if_matched_sid": 5701},
-                                   desc="sshd: brute force detected"))
+
+        doc = build_rule_doc(
+            _rule(
+                100002,
+                level=7,
+                mitre=[{"id": "T1110", "name": "Brute Force"}],
+                details={"frequency": 12, "if_matched_sid": 5701},
+                desc="sshd: brute force detected",
+            )
+        )
         self.assertIn("Wazuh rule 100002 (level 7) - enabled", doc)
         self.assertIn("File: local_rules.xml", doc)
         self.assertIn("Groups: syslog, sshd", doc)
@@ -108,6 +141,7 @@ class TestBuildRuleDoc(unittest.TestCase):
 
     def test_skips_empty_sections(self):
         from rag.rules_ingest import build_rule_doc
+
         doc = build_rule_doc(_rule(9, groups=[], mitre=[], details={}))
         self.assertIn("Wazuh rule 9", doc)
         self.assertNotIn("Groups:", doc)
@@ -116,8 +150,10 @@ class TestBuildRuleDoc(unittest.TestCase):
 
     def test_mitre_variants(self):
         from rag.rules_ingest import _fmt_mitre
-        self.assertEqual(_fmt_mitre([{"id": "T1059", "name": "Cmd and Scripting"}]),
-                         "T1059 (Cmd and Scripting)")
+
+        self.assertEqual(
+            _fmt_mitre([{"id": "T1059", "name": "Cmd and Scripting"}]), "T1059 (Cmd and Scripting)"
+        )
         self.assertEqual(_fmt_mitre([{"technique": "T1190", "technique_name": "X"}]), "T1190 (X)")
         self.assertEqual(_fmt_mitre([{"id": "T1190"}]), "T1190")
         self.assertEqual(_fmt_mitre(["T1110"]), "T1110")
@@ -127,6 +163,7 @@ class TestBuildRuleDoc(unittest.TestCase):
 class TestIngestRules(KbTestCase):
     def test_defaults_to_local_rules_and_upserts_by_rule_id(self):
         from rag.rules_ingest import ingest_wazuh_rules
+
         api = FakeManagerRulesAPI([_rule(100001), _rule(100002), _rule(100003)])
         kb = self._kb()
         out = ingest_wazuh_rules(api, kb)
@@ -137,10 +174,13 @@ class TestIngestRules(KbTestCase):
         self.assertFalse(out["truncated"])
         self.assertEqual(kb.counts()["wazuh_docs"], 3)
         rows = kb.query("wazuh_docs", "brute force sshd")
-        self.assertEqual({r["id"] for r in rows}, {"wazuh_rule_100001", "wazuh_rule_100002", "wazuh_rule_100003"})
+        self.assertEqual(
+            {r["id"] for r in rows}, {"wazuh_rule_100001", "wazuh_rule_100002", "wazuh_rule_100003"}
+        )
 
     def test_reingest_is_idempotent(self):
         from rag.rules_ingest import ingest_wazuh_rules
+
         api = FakeManagerRulesAPI([_rule(100001), _rule(100002)])
         kb = self._kb()
         first = ingest_wazuh_rules(api, kb)
@@ -151,6 +191,7 @@ class TestIngestRules(KbTestCase):
 
     def test_all_rules_paginates_and_reports_truncation(self):
         from rag.rules_ingest import ingest_wazuh_rules
+
         # > one 500-item page, so paging is exercised; fake KB keeps it fast
         rules = [_rule(i, filename="0095-sshd_rules.xml") for i in range(1001, 2202)]
         api = FakeManagerRulesAPI(rules)
@@ -161,8 +202,10 @@ class TestIngestRules(KbTestCase):
         self.assertTrue(all(c["filename"] is None for c in api.calls))
         self.assertEqual([c["offset"] for c in api.calls], [0, 500, 1000])
         # tail page returned exactly the remainder (1201 - 1000)
-        self.assertEqual([len(api.rules[c["offset"]:c["offset"] + c["limit"]]) for c in api.calls],
-                         [500, 500, 201])
+        self.assertEqual(
+            [len(api.rules[c["offset"] : c["offset"] + c["limit"]]) for c in api.calls],
+            [500, 500, 201],
+        )
 
         api2 = FakeManagerRulesAPI(rules)
         out2 = ingest_wazuh_rules(api2, kb, all_rules=True, max_rules=40)
@@ -171,6 +214,7 @@ class TestIngestRules(KbTestCase):
 
     def test_group_and_search_forwarded(self):
         from rag.rules_ingest import ingest_wazuh_rules
+
         api = FakeManagerRulesAPI([_rule(100001)])
         kb = self._kb()
         ingest_wazuh_rules(api, kb, group="web", search="sql")
@@ -179,6 +223,7 @@ class TestIngestRules(KbTestCase):
 
     def test_empty_local_rules_hint(self):
         from rag.rules_ingest import ingest_wazuh_rules
+
         api = FakeManagerRulesAPI([])
         kb = self._kb()
         out = ingest_wazuh_rules(api, kb)
@@ -187,13 +232,29 @@ class TestIngestRules(KbTestCase):
 
     def test_delete_missing_prunes_only_stale_in_scope(self):
         from rag.rules_ingest import ingest_wazuh_rules
+
         kb = self._kb()
         # stale local rule (should be pruned)
-        kb.add("wazuh_docs", "stale local", {"kind": "wazuh-rule", "filename": "local_rules.xml"}, doc_id="wazuh_rule_999")
+        kb.add(
+            "wazuh_docs",
+            "stale local",
+            {"kind": "wazuh-rule", "filename": "local_rules.xml"},
+            doc_id="wazuh_rule_999",
+        )
         # another-file rule snapshot (out of scope -> survives)
-        kb.add("wazuh_docs", "other file", {"kind": "wazuh-rule", "filename": "0095-sshd_rules.xml"}, doc_id="wazuh_rule_777")
+        kb.add(
+            "wazuh_docs",
+            "other file",
+            {"kind": "wazuh-rule", "filename": "0095-sshd_rules.xml"},
+            doc_id="wazuh_rule_777",
+        )
         # non-rule doc (untouched)
-        kb.add("wazuh_docs", "reference", {"kind": "rule-authoring", "source": "wazuh-rules.md"}, doc_id="wazuh-rules")
+        kb.add(
+            "wazuh_docs",
+            "reference",
+            {"kind": "rule-authoring", "source": "wazuh-rules.md"},
+            doc_id="wazuh-rules",
+        )
 
         api = FakeManagerRulesAPI([_rule(100001), _rule(100002)])
         out = ingest_wazuh_rules(api, kb)
@@ -207,8 +268,14 @@ class TestIngestRules(KbTestCase):
 
     def test_delete_missing_off_keeps_stale(self):
         from rag.rules_ingest import ingest_wazuh_rules
+
         kb = self._kb()
-        kb.add("wazuh_docs", "stale", {"kind": "wazuh-rule", "filename": "local_rules.xml"}, doc_id="wazuh_rule_999")
+        kb.add(
+            "wazuh_docs",
+            "stale",
+            {"kind": "wazuh-rule", "filename": "local_rules.xml"},
+            doc_id="wazuh_rule_999",
+        )
         api = FakeManagerRulesAPI([_rule(100001)])
         out = ingest_wazuh_rules(api, kb, delete_missing=False)
         self.assertEqual(out["rules_pruned"], 0)
@@ -224,6 +291,7 @@ class TestIngestWazuhRulesTool(KbTestCase):
 
     def test_runs_and_returns_summary(self):
         from tools.rag.ingest import IngestWazuhRules
+
         ctx = self._ctx([_rule(100001), _rule(100002)])
         out = IngestWazuhRules().run(ctx)
         self.assertEqual(out["rules_stored"], 2)
@@ -234,6 +302,7 @@ class TestIngestWazuhRulesTool(KbTestCase):
 
     def test_filename_all_magic_collects_full_ruleset(self):
         from tools.rag.ingest import IngestWazuhRules
+
         for magic in ("all", "all-rules"):
             ctx = self._ctx([_rule(i) for i in (100001, 100002)])
             out = IngestWazuhRules().run(ctx, filename=magic)
@@ -243,6 +312,7 @@ class TestIngestWazuhRulesTool(KbTestCase):
 
     def test_all_rules_param_collects_full_ruleset(self):
         from tools.rag.ingest import IngestWazuhRules
+
         ctx = self._ctx([_rule(i) for i in (100001, 100002)])
         out = IngestWazuhRules().run(ctx, all_rules=True)
         self.assertIsNone(out["selected"]["filename"])
@@ -254,6 +324,7 @@ class TestIngestWazuhRulesTool(KbTestCase):
         # The agent sends JSON {all_rules: "True"}; validate() must coerce the
         # string to a real boolean, NOT drop it and fall back to local_rules.xml.
         from tools.rag.ingest import IngestWazuhRules
+
         for raw in ("True", "true", 1):
             ctx = self._ctx([_rule(i) for i in (100001, 100002)])
             out = IngestWazuhRules().run(ctx, all_rules=raw)
@@ -267,6 +338,7 @@ class TestIngestWazuhRulesTool(KbTestCase):
 
     def test_all_rules_false_defaults_to_local_rules(self):
         from tools.rag.ingest import IngestWazuhRules
+
         ctx = self._ctx([_rule(100001), _rule(100002)])
         out = IngestWazuhRules().run(ctx, all_rules=False)
         self.assertFalse(out["selected"]["all_rules"])
@@ -275,6 +347,7 @@ class TestIngestWazuhRulesTool(KbTestCase):
 
     def test_max_rules_clamped(self):
         from tools.rag.ingest import IngestWazuhRules
+
         rules = [_rule(i) for i in range(1000, 1200)]
         ctx = self._ctx(rules)
         IngestWazuhRules().run(ctx, max_rules=999999)
@@ -282,6 +355,7 @@ class TestIngestWazuhRulesTool(KbTestCase):
 
     def test_max_rules_floor(self):
         from tools.rag.ingest import IngestWazuhRules
+
         api_rules = [_rule(100001), _rule(100002)]
         ctx = self._ctx(api_rules)
         out = IngestWazuhRules().run(ctx, max_rules=-5)  # clamped to 1
@@ -290,6 +364,7 @@ class TestIngestWazuhRulesTool(KbTestCase):
     def test_api_failure_surfaces_as_tool_error(self):
         from tools.base import ToolError
         from tools.rag.ingest import IngestWazuhRules
+
         ctx = mock.MagicMock()
         ctx.wazuh = mock.MagicMock()
         ctx.wazuh.get_rules.side_effect = RuntimeError("manager down")
@@ -302,6 +377,7 @@ class TestIngestWazuhRulesRegistry(unittest.TestCase):
     def test_tool_is_registered_as_read(self):
         from tools import registry
         from tools.base import Permission
+
         self.assertIn("ingest_wazuh_rules", registry.tool_names())
         tool = registry.get_tool("ingest_wazuh_rules")
         self.assertIsInstance(tool.permission, Permission)
@@ -309,6 +385,7 @@ class TestIngestWazuhRulesRegistry(unittest.TestCase):
 
     def test_read_executes_immediately_via_registry(self):
         from tools import registry
+
         api = FakeManagerRulesAPI([_rule(100001), _rule(100002)])
         fake_kb = mock.MagicMock()
         fake_kb.add = mock.MagicMock()
@@ -317,9 +394,11 @@ class TestIngestWazuhRulesRegistry(unittest.TestCase):
         ctx = mock.MagicMock()
         ctx.wazuh = api
         ctx.approval = None
-        with mock.patch("rag.knowledge_base.KnowledgeBase", return_value=fake_kb), \
-             mock.patch("audit.audit_log"), \
-             mock.patch("approvals.create_proposal"):
+        with (
+            mock.patch("rag.knowledge_base.KnowledgeBase", return_value=fake_kb),
+            mock.patch("audit.audit_log"),
+            mock.patch("approvals.create_proposal"),
+        ):
             out = registry.execute(ctx, "ingest_wazuh_rules", {"max_rules": 10})
         self.assertEqual(out["status"], "ok")
         self.assertEqual(out["result"]["rules_stored"], 2)

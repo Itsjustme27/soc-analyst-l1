@@ -26,6 +26,16 @@ venv*/
 # repo root because nothing claimed them
 *.out
 
+# --- coverage / static analysis artifacts ---
+.coverage
+.coverage.*
+coverage.xml
+htmlcov/
+.ruff_cache/
+.bandit_cache/
+.pytest_cache/
+.mypy_cache/
+
 # --- data dir (runtime artifacts) ---
 data/*
 !data/.gitkeep

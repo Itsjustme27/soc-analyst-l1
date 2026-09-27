@@ -18,6 +18,7 @@ The LLM can never bypass a write gate: create/update/delete tools raise
 ApprovalRequired internally if ctx.approval is absent, and `execute` converts
 that into the approval_required outcome.
 """
+
 from __future__ import annotations
 
 from typing import Any
@@ -37,17 +38,25 @@ from tools.base import (
 
 
 def _collect_tool_classes() -> list[type[BaseWazuhTool]]:
-    from tools.indexer import TOOLS as INDEXER_TOOLS
-    from tools.wazuh import TOOLS as WAZUH_TOOLS
     from tools.dashboard import TOOLS as DASHBOARD_TOOLS
-    from tools.investigate import TOOLS as INVESTIGATE_TOOLS
     from tools.detection import TOOLS as DETECTION_TOOLS
     from tools.gaps import TOOLS as GAP_TOOLS
-    from tools.rag import TOOLS as RAG_TOOLS
+    from tools.indexer import TOOLS as INDEXER_TOOLS
+    from tools.investigate import TOOLS as INVESTIGATE_TOOLS
     from tools.propose import ProposeAction
-    return [*INDEXER_TOOLS, *WAZUH_TOOLS, *DASHBOARD_TOOLS,
-            *INVESTIGATE_TOOLS, *DETECTION_TOOLS, *GAP_TOOLS, *RAG_TOOLS,
-            ProposeAction]
+    from tools.rag import TOOLS as RAG_TOOLS
+    from tools.wazuh import TOOLS as WAZUH_TOOLS
+
+    return [
+        *INDEXER_TOOLS,
+        *WAZUH_TOOLS,
+        *DASHBOARD_TOOLS,
+        *INVESTIGATE_TOOLS,
+        *DETECTION_TOOLS,
+        *GAP_TOOLS,
+        *RAG_TOOLS,
+        ProposeAction,
+    ]
 
 
 ALL_TOOL_CLASSES: list[type[BaseWazuhTool]] = _collect_tool_classes()
@@ -79,8 +88,9 @@ def _permission_level(tool: BaseWazuhTool) -> Permission:
     return tool.permission
 
 
-def _store_proposal(proposed: dict[str, Any], ctx: ToolContext,
-                    tool: BaseWazuhTool, clean: dict[str, Any]) -> dict[str, Any]:
+def _store_proposal(
+    proposed: dict[str, Any], ctx: ToolContext, tool: BaseWazuhTool, clean: dict[str, Any]
+) -> dict[str, Any]:
     """Persist a tool's proposed action into the Approval Center so it gets an
     id humans can approve, and thread the id back through audit + the agent."""
     return approvals.create_proposal(
@@ -112,8 +122,13 @@ def execute(
     try:
         clean = tool.validate(params)
     except ToolParamError as e:
-        audit.audit_log(tool=tool_name, params=tool.redact(params), permission=level.value,
-                        execution_status="rejected", error=str(e))
+        audit.audit_log(
+            tool=tool_name,
+            params=tool.redact(params),
+            permission=level.value,
+            execution_status="rejected",
+            error=str(e),
+        )
         return {"status": "error", "error": str(e)}
 
     # 2) permission gate: READ runs now; PROPOSE/EXECUTE only with approval
@@ -122,12 +137,16 @@ def execute(
             tool.run(ctx, **clean)  # running without approval raises ApprovalRequired
             # A write tool that somehow ran without approval is a bug - treat
             # as denied and report.
-            raise PermissionDenied(f"{tool_name} is a write tool but executed without an approved proposal.")
+            raise PermissionDenied(
+                f"{tool_name} is a write tool but executed without an approved proposal."
+            )
         except ApprovalRequired as e:
             proposal = _store_proposal(e.proposed_action, ctx, tool, clean)
             audit.audit_log(
-                tool=tool_name, params=tool.redact(clean),
-                permission=level.value, approval_status="proposed",
+                tool=tool_name,
+                params=tool.redact(clean),
+                permission=level.value,
+                approval_status="proposed",
                 execution_status="awaiting_approval",
                 action=proposal.get("action", tool_name),
                 result={"proposal_id": proposal.get("id")},
@@ -141,28 +160,48 @@ def execute(
         result = tool.run(ctx, **clean)
     except ApprovalRequired as e:
         proposal = _store_proposal(e.proposed_action, ctx, tool, clean)
-        audit.audit_log(tool=tool_name, params=tool.redact(clean), permission=level.value,
-                        approval_status="proposed", execution_status="awaiting_approval",
-                        action=proposal.get("action", tool_name),
-                        result={"proposal_id": proposal.get("id")})
+        audit.audit_log(
+            tool=tool_name,
+            params=tool.redact(clean),
+            permission=level.value,
+            approval_status="proposed",
+            execution_status="awaiting_approval",
+            action=proposal.get("action", tool_name),
+            result={"proposal_id": proposal.get("id")},
+        )
         return {"status": "approval_required", "proposal": proposal}
     except (ToolError, PermissionDenied) as e:
-        audit.audit_log(tool=tool_name, params=tool.redact(clean), permission=level.value,
-                        execution_status="failed", error=str(e))
+        audit.audit_log(
+            tool=tool_name,
+            params=tool.redact(clean),
+            permission=level.value,
+            execution_status="failed",
+            error=str(e),
+        )
         if silent:
             raise
         return {"status": "error", "error": str(e)}
     except Exception as e:  # noqa: BLE001 - unexpected failure, still audited
-        audit.audit_log(tool=tool_name, params=tool.redact(clean), permission=level.value,
-                        execution_status="failed", error=f"unexpected: {e}")
+        audit.audit_log(
+            tool=tool_name,
+            params=tool.redact(clean),
+            permission=level.value,
+            execution_status="failed",
+            error=f"unexpected: {e}",
+        )
         if silent:
             raise
         return {"status": "error", "error": f"unexpected failure: {e}"}
 
     approval_status = "approved" if ctx.approval else "not_required"
-    audit.audit_log(tool=tool_name, params=tool.redact(clean), permission=level.value,
-                    approval_status=approval_status, execution_status="success",
-                    result=_result_summary(result))
+    audit.audit_log(
+        tool=tool_name,
+        params=tool.redact(clean),
+        permission=level.value,
+        approval_status=approval_status,
+        execution_status="success",
+        result=_result_summary(result),
+    )
 
     if silent:
         return result if isinstance(result, dict) else {"result": result}
@@ -174,6 +213,7 @@ def execute(
 
 def _as_jsonable(value: Any) -> Any:
     import json
+
     try:
         json.dumps(value, default=str)
         return value

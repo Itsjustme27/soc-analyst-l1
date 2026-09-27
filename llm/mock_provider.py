@@ -16,6 +16,7 @@ the final verdict from tool results that actually appear in the conversation
 history, so the transcript still shows the retrieval -> enrichment -> verdict
 flow (and would break loudly if a real endpoint changed shape).
 """
+
 from __future__ import annotations
 
 import json
@@ -33,9 +34,13 @@ ALERT_PREFIX = "New alert to triage:"
 def _first_alert(messages: list[dict[str, Any]]) -> dict[str, Any] | None:
     for m in messages:
         content = m.get("content")
-        if m.get("role") == "user" and isinstance(content, str) and content.startswith(ALERT_PREFIX):
+        if (
+            m.get("role") == "user"
+            and isinstance(content, str)
+            and content.startswith(ALERT_PREFIX)
+        ):
             try:
-                return json.loads(content[len(ALERT_PREFIX):])
+                return json.loads(content[len(ALERT_PREFIX) :])
             except json.JSONDecodeError:
                 return {}
     return None
@@ -81,43 +86,90 @@ class MockProvider(LLMProvider):
     def _plan(self, alert_type: str, alert: dict[str, Any]) -> list[ToolCall]:
         if alert_type == "brute_force":
             return [
-                ToolCall(id="mock-1", name="retrieve_playbook",
-                         input={"query": "brute force credential stuff multiple auth failures"}),  # noqa
-                ToolCall(id="mock-2", name="retrieve_similar_cases",
-                         input={"query": "brute force multiple auth failures then success"}),  # noqa
-                ToolCall(id="mock-3", name="retrieve_lessons",
-                         input={"query": "brute force source ip reputation mfa fatigue service account"}),  # noqa
-                ToolCall(id="mock-4", name="search_related_events",
-                         input={"host": alert.get("host"), "user": alert.get("user"), "earliest": "-24h"}),  # noqa
+                ToolCall(
+                    id="mock-1",
+                    name="retrieve_playbook",
+                    input={"query": "brute force credential stuff multiple auth failures"},
+                ),  # noqa
+                ToolCall(
+                    id="mock-2",
+                    name="retrieve_similar_cases",
+                    input={"query": "brute force multiple auth failures then success"},
+                ),  # noqa
+                ToolCall(
+                    id="mock-3",
+                    name="retrieve_lessons",
+                    input={"query": "brute force source ip reputation mfa fatigue service account"},
+                ),  # noqa
+                ToolCall(
+                    id="mock-4",
+                    name="search_related_events",
+                    input={
+                        "host": alert.get("host"),
+                        "user": alert.get("user"),
+                        "earliest": "-24h",
+                    },
+                ),  # noqa
             ]
         if alert_type == "malware":
             return [
-                ToolCall(id="mock-1", name="retrieve_playbook",
-                         input={"query": "malware detection c2 beacon edr"}),
-                ToolCall(id="mock-2", name="retrieve_similar_cases",
-                         input={"query": "edr malware office macro spawning powershell base64"}),
-                ToolCall(id="mock-3", name="retrieve_lessons",
-                         input={"query": "malware beacon suspicious parent process unknown hash"}),
-                ToolCall(id="mock-4", name="get_host_info", input={"host_id": alert.get("host_id")}),
-                ToolCall(id="mock-5", name="get_process_tree",
-                         input={"falcon_process_id": alert.get("falcon_process_id")}),
-                ToolCall(id="mock-6", name="get_detection_details",
-                         input={"detection_id": alert.get("detection_id")}),
-                ToolCall(id="mock-7", name="get_host_alert_history",
-                         input={"host_id": alert.get("host_id")}),
+                ToolCall(
+                    id="mock-1",
+                    name="retrieve_playbook",
+                    input={"query": "malware detection c2 beacon edr"},
+                ),
+                ToolCall(
+                    id="mock-2",
+                    name="retrieve_similar_cases",
+                    input={"query": "edr malware office macro spawning powershell base64"},
+                ),
+                ToolCall(
+                    id="mock-3",
+                    name="retrieve_lessons",
+                    input={"query": "malware beacon suspicious parent process unknown hash"},
+                ),
+                ToolCall(
+                    id="mock-4", name="get_host_info", input={"host_id": alert.get("host_id")}
+                ),
+                ToolCall(
+                    id="mock-5",
+                    name="get_process_tree",
+                    input={"falcon_process_id": alert.get("falcon_process_id")},
+                ),
+                ToolCall(
+                    id="mock-6",
+                    name="get_detection_details",
+                    input={"detection_id": alert.get("detection_id")},
+                ),
+                ToolCall(
+                    id="mock-7",
+                    name="get_host_alert_history",
+                    input={"host_id": alert.get("host_id")},
+                ),
             ]
         if alert_type == "phishing":
             return [
-                ToolCall(id="mock-1", name="retrieve_playbook",
-                         input={"query": "phishing user reported suspicious email spf dkim"}),
-                ToolCall(id="mock-2", name="retrieve_similar_cases",
-                         input={"query": "phishing spoofed it support credentials link"}),
-                ToolCall(id="mock-3", name="retrieve_lessons",
-                         input={"query": "phishing credential lure no click monitor"}),
+                ToolCall(
+                    id="mock-1",
+                    name="retrieve_playbook",
+                    input={"query": "phishing user reported suspicious email spf dkim"},
+                ),
+                ToolCall(
+                    id="mock-2",
+                    name="retrieve_similar_cases",
+                    input={"query": "phishing spoofed it support credentials link"},
+                ),
+                ToolCall(
+                    id="mock-3",
+                    name="retrieve_lessons",
+                    input={"query": "phishing credential lure no click monitor"},
+                ),
             ]
         return [
             ToolCall(id="mock-1", name="retrieve_playbook", input={"query": "general triage"}),
-            ToolCall(id="mock-2", name="retrieve_similar_cases", input={"query": "similar past cases"}),
+            ToolCall(
+                id="mock-2", name="retrieve_similar_cases", input={"query": "similar past cases"}
+            ),
             ToolCall(id="mock-3", name="retrieve_lessons", input={"query": "known noisy patterns"}),
         ]
 

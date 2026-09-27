@@ -1,0 +1,72 @@
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+    branches: [main]
+
+concurrency:
+  group: ci-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  test:
+    name: tests (Python ${{ matrix.python-version }})
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        python-version: ["3.11", "3.12", "3.13"]
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Set up Python ${{ matrix.python-version }}
+        uses: actions/setup-python@v5
+        with:
+          python-version: ${{ matrix.python-version }}
+          cache: pip
+
+      - name: Install runtime deps + dev tooling
+        run: |
+          python -m pip install --upgrade pip
+          pip install -r requirements.txt
+          pip install ruff coverage bandit
+
+      - name: Lint (ruff)
+        run: ruff check --output-format concise agent cli connectors llm rag tools approvals.py approval_executor.py audit.py config.py dashboard.py permissions.py rules.py siem_providers.py agent_control.py main.py run.py *.py scripts_*.py
+
+      - name: Python 3.11 syntax compatibility (f-string gate)
+        run: python scripts/check_py311_syntax.py
+
+      - name: Security scan (bandit, medium+)
+        run: bandit -q -lll -r agent cli connectors llm rag tools dashboard.py approvals.py permissions.py approval_executor.py audit.py config.py
+
+      - name: Tests + coverage (offline, MOCK_MODE)
+        run: |
+          MOCK_MODE=true python -m coverage run --source=. --omit="venv/*,tests/*,.venv*/*,live_validation/*" -m unittest discover -s tests -p "test_*.py"
+          python -m coverage report --fail-under=70
+
+  docs-smoke:
+    name: docs / config smoke
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+
+      - name: Install deps
+        run: |
+          python -m pip install --upgrade pip
+          pip install -r requirements.txt
+
+      - name: config/.env.example drift check
+        run: python scripts/check_env_example_sync.py
+
+      - name: Import smoke (app modules import cleanly)
+        run: |
+          MOCK_MODE=true python -c "import dashboard, main, run, approvals, approval_executor, permissions, agent.triage_agent, agent.chat_agent, agent.soc_engineer, cli.mcp_client, cli.middleware"
+          python -c "print('import smoke OK')"

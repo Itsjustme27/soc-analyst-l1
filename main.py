@@ -17,20 +17,24 @@ Entry point. Two modes:
 Every run writes one line per case to data/triage_log.jsonl - that's your
 audit trail and also the input queue for the feedback CLI.
 """
-from __future__ import annotations
-import json
-from pathlib import Path
-from dataclasses import asdict
 
-from config import cfg
-from agent.triage_agent import TriageAgent, needs_human_review
-from connectors.siem import SIEMConnector
-import rules
+from __future__ import annotations
+
+import json
+from dataclasses import asdict
+from pathlib import Path
+
 import notify
+import rules
+from agent.triage_agent import TriageAgent, needs_human_review
+from config import cfg
+from connectors.siem import SIEMConnector
 
 
 def _triage_log_path(path: str | Path | None = None) -> Path:
-    return Path(path) if path else Path(getattr(cfg, "TRIAGE_LOG_PATH", "") or "data/triage_log.jsonl")
+    return (
+        Path(path) if path else Path(getattr(cfg, "TRIAGE_LOG_PATH", "") or "data/triage_log.jsonl")
+    )
 
 
 def run_demo(provider: str | None = None):
@@ -40,6 +44,7 @@ def run_demo(provider: str | None = None):
 
 def run_live(provider: str | None = None, siem: str | None = None):
     from siem_providers import load_providers, resolve_connector
+
     try:
         connector = resolve_connector(siem)
     except ValueError as e:
@@ -53,8 +58,10 @@ def run_live(provider: str | None = None, siem: str | None = None):
         alerts = connector.get_new_alerts()
     except Exception as e:  # noqa: BLE001 - unconfigured/unreachable provider
         print(f"Error pulling alerts from '{connector.name}': {e}")
-        print("Is the provider configured? Check the dashboard (python dashboard.py) "
-              "for its status, or the matching <PLATFORM>_* vars in .env.")
+        print(
+            "Is the provider configured? Check the dashboard (python dashboard.py) "
+            "for its status, or the matching <PLATFORM>_* vars in .env."
+        )
         return
     if not alerts:
         print("No new alerts.")
@@ -69,7 +76,9 @@ def _run_batch(alerts: list[dict], provider: str | None = None, siem: SIEMConnec
 
     for alert in alerts:
         alert_id = alert.get("alert_id", "unknown")
-        print(f"\n{'=' * 70}\nTriaging {alert_id}: {alert.get('rule_name', alert.get('description', ''))}\n{'=' * 70}")
+        print(
+            f"\n{'=' * 70}\nTriaging {alert_id}: {alert.get('rule_name', alert.get('description', ''))}\n{'=' * 70}"
+        )
 
         try:
             rule_matches = rules.evaluate_all(alert)
@@ -93,15 +102,23 @@ def _run_batch(alerts: list[dict], provider: str | None = None, siem: SIEMConnec
         print(f"  Evidence used:      {result.evidence_used}")
 
         needs_human = needs_human_review(result, rule_matches)
-        print(f"  --> {'NEEDS HUMAN REVIEW' if needs_human else 'auto-closeable (still logged for spot-check)'}")
+        print(
+            f"  --> {'NEEDS HUMAN REVIEW' if needs_human else 'auto-closeable (still logged for spot-check)'}"
+        )
 
         with open(log_path, "a") as f:
-            f.write(json.dumps({
-                "alert": alert,
-                "result": asdict(result),
-                "rule_matches": rule_matches,
-                "needs_human_review": needs_human,
-            }, default=str) + "\n")
+            f.write(
+                json.dumps(
+                    {
+                        "alert": alert,
+                        "result": asdict(result),
+                        "rule_matches": rule_matches,
+                        "needs_human_review": needs_human,
+                    },
+                    default=str,
+                )
+                + "\n"
+            )
 
 
 if __name__ == "__main__":
@@ -113,14 +130,14 @@ if __name__ == "__main__":
         "--provider",
         default=None,
         help="LLM provider override: anthropic | openai | google | mock | freellmapi "
-             "(default: LLM_PROVIDER from .env)",
+        "(default: LLM_PROVIDER from .env)",
     )
     parser.add_argument(
         "--siem",
         default=None,
         help="SIEM connection to pull alerts from (live mode): a provider id from the "
-             "dashboard (python dashboard.py) or a platform: splunk | qradar | "
-             "elastic | sentinel | mock (default: SIEM_PROVIDER from .env)",
+        "dashboard (python dashboard.py) or a platform: splunk | qradar | "
+        "elastic | sentinel | mock (default: SIEM_PROVIDER from .env)",
     )
     args = parser.parse_args()
 

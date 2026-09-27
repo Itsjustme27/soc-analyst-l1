@@ -6,6 +6,7 @@ OpenAI, OpenRouter, Azure OpenAI, Ollama, vLLM, LM Studio, DeepSeek, Together,
 Groq, ... Just point OPENAI_BASE_URL at it. Implemented with plain `requests`
 so no extra SDK dependency is required.
 """
+
 from __future__ import annotations
 
 import email.utils
@@ -19,7 +20,7 @@ from typing import Any
 import requests
 
 from config import cfg
-from llm.base import LLMError, LLMRateLimitedError, LLMProvider, LLMResponse, ToolCall, trace_llm
+from llm.base import LLMError, LLMProvider, LLMRateLimitedError, LLMResponse, ToolCall, trace_llm
 
 # Statuses worth retrying. 429 (rate limit) gets its own, much smaller budget:
 # a rate-limited key needs *time*, not more requests, and retrying it hard just
@@ -128,10 +129,15 @@ class OpenAICompatProvider(LLMProvider):
             payload["tools"] = to_openai_tools(tools)
         return payload
 
-    def _build_and_post(self, *, system, messages, tools, max_tokens, model=None,
-                        request_id=None) -> requests.Response:
+    def _build_and_post(
+        self, *, system, messages, tools, max_tokens, model=None, request_id=None
+    ) -> requests.Response:
         payload = self._build_payload(
-            system=system, messages=messages, tools=tools, max_tokens=max_tokens, model=model,
+            system=system,
+            messages=messages,
+            tools=tools,
+            max_tokens=max_tokens,
+            model=model,
         )
         return self._post(payload, request_id=request_id)
 
@@ -149,13 +155,28 @@ class OpenAICompatProvider(LLMProvider):
         wait = min(float(wait), cfg.LLM_RETRY_BACKOFF_MAX)
         return max(0.0, wait + random.uniform(0, 0.5))
 
-    def _retry_sleep(self, attempt: int, retry_after: str | None, *, request_id, model,
-                     status: int, latency_ms: float, error: str | None = None) -> None:
+    def _retry_sleep(
+        self,
+        attempt: int,
+        retry_after: str | None,
+        *,
+        request_id,
+        model,
+        status: int,
+        latency_ms: float,
+        error: str | None = None,
+    ) -> None:
         wait = self._wait_seconds(attempt, retry_after)
         trace_llm(
-            event="llm.retry", request_id=request_id, attempt=attempt, model=model,
-            status=status, latency_ms=round(latency_ms, 1), retry_after=retry_after,
-            sleep_s=round(wait, 1), error=error,
+            event="llm.retry",
+            request_id=request_id,
+            attempt=attempt,
+            model=model,
+            status=status,
+            latency_ms=round(latency_ms, 1),
+            retry_after=retry_after,
+            sleep_s=round(wait, 1),
+            error=error,
         )
         time.sleep(wait)
 
@@ -191,27 +212,46 @@ class OpenAICompatProvider(LLMProvider):
                 resp.raise_for_status()
                 latency_ms = (time.time() - t0) * 1000
                 trace_llm(
-                    event="llm.try", request_id=request_id, attempt=attempt, model=model,
-                    status=resp.status_code, latency_ms=round(latency_ms, 1), retry_after=None,
+                    event="llm.try",
+                    request_id=request_id,
+                    attempt=attempt,
+                    model=model,
+                    status=resp.status_code,
+                    latency_ms=round(latency_ms, 1),
+                    retry_after=None,
                 )
                 return resp
             except requests.HTTPError as e:
                 status = e.response.status_code if e.response is not None else 0
                 latency_ms = (time.time() - t0) * 1000
-                retry_after = (e.response.headers or {}).get("Retry-After") if e.response is not None else None
+                retry_after = (
+                    (e.response.headers or {}).get("Retry-After")
+                    if e.response is not None
+                    else None
+                )
                 if status == 429:
                     if budget_429 > 0:
                         budget_429 -= 1
                         self._retry_sleep(
-                            attempt, retry_after, request_id=request_id, model=model,
-                            status=status, latency_ms=latency_ms, error=str(e)[:120],
+                            attempt,
+                            retry_after,
+                            request_id=request_id,
+                            model=model,
+                            status=status,
+                            latency_ms=latency_ms,
+                            error=str(e)[:120],
                         )
                         attempt += 1
                         continue
                     trace_llm(
-                        event="llm.failed", request_id=request_id, attempt=attempt, model=model,
-                        status=status, latency_ms=round(latency_ms, 1),
-                        retry_after=retry_after, error=str(e)[:120],
+                        event="llm.failed",
+                        request_id=request_id,
+                        attempt=attempt,
+                        model=model,
+                        status=status,
+                        latency_ms=round(latency_ms, 1),
+                        retry_after=retry_after,
+                        error=str(e)[:120],
                     )
                     raise LLMRateLimitedError(
                         f"LLM gateway rate limited (HTTP 429) after "
@@ -224,23 +264,38 @@ class OpenAICompatProvider(LLMProvider):
                     if budget_5xx > 0:
                         budget_5xx -= 1
                         self._retry_sleep(
-                            attempt, retry_after, request_id=request_id, model=model,
-                            status=status, latency_ms=latency_ms, error=str(e)[:120],
+                            attempt,
+                            retry_after,
+                            request_id=request_id,
+                            model=model,
+                            status=status,
+                            latency_ms=latency_ms,
+                            error=str(e)[:120],
                         )
                         attempt += 1
                         continue
                     trace_llm(
-                        event="llm.failed", request_id=request_id, attempt=attempt, model=model,
-                        status=status, latency_ms=round(latency_ms, 1),
-                        retry_after=retry_after, error=str(e)[:120],
+                        event="llm.failed",
+                        request_id=request_id,
+                        attempt=attempt,
+                        model=model,
+                        status=status,
+                        latency_ms=round(latency_ms, 1),
+                        retry_after=retry_after,
+                        error=str(e)[:120],
                     )
                     raise LLMError(
                         f"LLM gateway error (HTTP {status}) after {cfg.LLM_MAX_RETRIES + 1} attempts"
                     ) from e
                 trace_llm(
-                    event="llm.failed", request_id=request_id, attempt=attempt, model=model,
-                    status=status, latency_ms=round(latency_ms, 1),
-                    retry_after=retry_after, error=str(e)[:120],
+                    event="llm.failed",
+                    request_id=request_id,
+                    attempt=attempt,
+                    model=model,
+                    status=status,
+                    latency_ms=round(latency_ms, 1),
+                    retry_after=retry_after,
+                    error=str(e)[:120],
                 )
                 raise  # don't retry auth errors (401/403) etc.
             except requests.RequestException as e:
@@ -248,12 +303,19 @@ class OpenAICompatProvider(LLMProvider):
                 if budget_5xx > 0:
                     budget_5xx -= 1
                     self._retry_sleep(
-                        attempt, None, request_id=request_id, model=model,
-                        status=0, latency_ms=latency_ms, error=str(e)[:120],
+                        attempt,
+                        None,
+                        request_id=request_id,
+                        model=model,
+                        status=0,
+                        latency_ms=latency_ms,
+                        error=str(e)[:120],
                     )
                     attempt += 1
                     continue
-                raise LLMError(f"LLM request failed after {cfg.LLM_MAX_RETRIES + 1} attempts: {e}") from e
+                raise LLMError(
+                    f"LLM request failed after {cfg.LLM_MAX_RETRIES + 1} attempts: {e}"
+                ) from e
 
     def _post_once(self, payload: dict[str, Any]) -> requests.Response:
         resp = requests.post(
@@ -271,8 +333,13 @@ class OpenAICompatProvider(LLMProvider):
 
         calls = []
         for tc in msg.get("tool_calls") or []:
-            calls.append(ToolCall(id=tc["id"], name=tc["function"]["name"],
-                                  input=_coerce_tool_input(tc["function"]["arguments"])))
+            calls.append(
+                ToolCall(
+                    id=tc["id"],
+                    name=tc["function"]["name"],
+                    input=_coerce_tool_input(tc["function"]["arguments"]),
+                )
+            )
         return LLMResponse(
             content=msg.get("content") or "",
             tool_calls=calls,
@@ -283,13 +350,20 @@ class OpenAICompatProvider(LLMProvider):
     def chat(self, *, system, messages, tools, max_tokens) -> LLMResponse:
         request_id = uuid.uuid4().hex[:12]
         resp = self._build_and_post(
-            system=system, messages=messages, tools=tools, max_tokens=max_tokens,
+            system=system,
+            messages=messages,
+            tools=tools,
+            max_tokens=max_tokens,
             request_id=request_id,
         )
         out = self._parse_response(resp)
         out.request_id = request_id
         trace_llm(
-            event="llm.done", request_id=request_id, model=resp.json().get("model"),
-            status=resp.status_code, usage=out.usage or None, provider=None,
+            event="llm.done",
+            request_id=request_id,
+            model=resp.json().get("model"),
+            status=resp.status_code,
+            usage=out.usage or None,
+            provider=None,
         )
         return out

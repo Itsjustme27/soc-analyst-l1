@@ -23,9 +23,12 @@ mode, KnowledgeBase falls back to whatever's actually persisted there rather
 than erroring - so flipping MOCK_MODE on an existing data dir degrades
 gracefully to the embedding it was already using, it doesn't crash.
 """
+
 from __future__ import annotations
+
 import uuid
 from typing import Any
+
 import chromadb
 
 from config import cfg
@@ -65,16 +68,17 @@ class KnowledgeBase:
                 self._collections[name] = self.client.get_or_create_collection(name)
 
     # ------------------------------------------------------------------ #
-    def add(self, collection: str, text: str, metadata: dict[str, Any], doc_id: str | None = None) -> str:
+    def add(
+        self, collection: str, text: str, metadata: dict[str, Any], doc_id: str | None = None
+    ) -> str:
         assert collection in COLLECTIONS, f"unknown collection {collection}"
         doc_id = doc_id or str(uuid.uuid4())
-        self._collections[collection].upsert(
-            ids=[doc_id], documents=[text], metadatas=[metadata]
-        )
+        self._collections[collection].upsert(ids=[doc_id], documents=[text], metadatas=[metadata])
         return doc_id
 
-    def query(self, collection: str, text: str, n_results: int = 4,
-              where: dict[str, Any] | None = None) -> list[dict[str, Any]]:
+    def query(
+        self, collection: str, text: str, n_results: int = 4, where: dict[str, Any] | None = None
+    ) -> list[dict[str, Any]]:
         assert collection in COLLECTIONS, f"unknown collection {collection}"
         coll = self._collections[collection]
         if coll.count() == 0:
@@ -83,7 +87,11 @@ class KnowledgeBase:
         res = coll.query(query_texts=[text], n_results=n_results, where=where)
         out = []
         for doc, meta, dist, _id in zip(
-            res["documents"][0], res["metadatas"][0], res["distances"][0], res["ids"][0]
+            res["documents"][0],
+            res["metadatas"][0],
+            res["distances"][0],
+            res["ids"][0],
+            strict=True,
         ):
             out.append({"id": _id, "text": doc, "metadata": meta, "distance": dist})
         return out
@@ -92,15 +100,12 @@ class KnowledgeBase:
         """Fetch documents by metadata filter without embedding the query
         (cheap listing - used to enumerate synced snapshots for pruning)."""
         assert collection in COLLECTIONS, f"unknown collection {collection}"
-        res = self._collections[collection].get(
-            where=where, include=["documents", "metadatas"]
-        )
+        res = self._collections[collection].get(where=where, include=["documents", "metadatas"])
         ids = res.get("ids", []) or []
         docs = res.get("documents", []) or []
         metas = res.get("metadatas", []) or []
         return [
-            {"id": i, "text": d, "metadata": m}
-            for i, d, m in zip(ids, docs, metas)
+            {"id": i, "text": d, "metadata": m} for i, d, m in zip(ids, docs, metas, strict=True)
         ]
 
     def delete(self, collection: str, ids: list[str]) -> int:

@@ -8,6 +8,7 @@ sanity (if_sid/if_group references must be plausibly present). The manager's
 logtest is the authoritative check afterwards; this layer catches the
 obvious mistakes cheaply and without touching Wazuh.
 """
+
 from __future__ import annotations
 
 import re
@@ -18,18 +19,23 @@ _REQUIRED_RULE_ATTRS = ("id", "level")
 _REQUIRED_DECODER_ATTRS = ("name",)
 
 
+from tools.wazuh.xmlio import UnsafeXmlError, safe_fromstring
+
+
 def parse_xml(xml_text: str) -> ET.Element | None:
     try:
-        return ET.fromstring(xml_text)
-    except ET.ParseError:
+        return safe_fromstring(xml_text)
+    except (ET.ParseError, UnsafeXmlError):
         return None
 
 
 def parse_error(xml_text: str) -> str:
     try:
-        ET.fromstring(xml_text)
+        safe_fromstring(xml_text)
         return ""
     except ET.ParseError as e:
+        return str(e)
+    except UnsafeXmlError as e:
         return str(e)
 
 
@@ -56,7 +62,11 @@ def validate_wazuh_rule_xml(xml_text: str) -> dict[str, Any]:
     if root is None:
         return {"valid": False, "errors": [f"XML parse error: {parse_error(xml_text)}"], **info}
     if root.tag != "rule":
-        return {"valid": False, "errors": [f"Root element is <{root.tag}>, expected <rule>."], **info}
+        return {
+            "valid": False,
+            "errors": [f"Root element is <{root.tag}>, expected <rule>."],
+            **info,
+        }
 
     for attr in _REQUIRED_RULE_ATTRS:
         if attr not in root.attrib:
@@ -71,7 +81,9 @@ def validate_wazuh_rule_xml(xml_text: str) -> dict[str, Any]:
                 # built-in range is 1..99999; custom rules should be 100000+
                 # (enforced by Wazuh docs) - warn, don't hard-fail, since some
                 # environments legitimately patch lower ranges.
-                errors.append(f"Rule id {rule_id} is in the built-in range; custom rules should use id >= 100000.")
+                errors.append(
+                    f"Rule id {rule_id} is in the built-in range; custom rules should use id >= 100000."
+                )
         except ValueError:
             errors.append(f"Rule id '{rid}' is not an integer.")
 
@@ -83,7 +95,9 @@ def validate_wazuh_rule_xml(xml_text: str) -> dict[str, Any]:
             if not 0 <= level <= 15:
                 errors.append(f"Rule level {level} is outside 0..15.")
             if level == 0:
-                errors.append("Rule level 0 suppresses alerts - only use it for noise-suppression rules.")
+                errors.append(
+                    "Rule level 0 suppresses alerts - only use it for noise-suppression rules."
+                )
         except ValueError:
             errors.append(f"Rule level '{lvl}' is not an integer.")
 
@@ -92,7 +106,9 @@ def validate_wazuh_rule_xml(xml_text: str) -> dict[str, Any]:
     if desc and desc.strip():
         info["description"] = desc.strip()
     else:
-        errors.append("Rule has no description (set the description attribute or add a <description> element).")
+        errors.append(
+            "Rule has no description (set the description attribute or add a <description> element)."
+        )
 
     # frequency/timeframe/divide must be rule ATTRIBUTES (e.g.
     # <rule id=... level=... frequency="3" timeframe="60">), NEVER child
@@ -133,16 +149,49 @@ def validate_wazuh_rule_xml(xml_text: str) -> dict[str, Any]:
     #   <rule id=".." level="10" frequency="5" timeframe="60">
     #     <if_matched_sid>5710,5760</if_matched_sid><same_source_ip /></rule>
     _KNOWN_TAGS = {
-        "match", "regex", "if_sid", "if_matched_sid", "if_group", "if_level",
-        "if_matched_group", "if_matched_level",
-        "decoded_as", "field", "same_rule", "timeout",
-        "same_source_ip", "same_source_port", "same_dest_ip", "same_field",
-        "same_id", "same_user", "same_location", "same_agent",
-        "not_sid", "not_group", "not_level", "not_regex",
-        "category", "rule",
-        "syscheck", "ar", "group", "mitre", "options", "var", "list",
-        "check_all", "check_any", "check_diff", "info", "alert_opts",
-        "id", "level", "description", "accumulate", "relative_dirname",
+        "match",
+        "regex",
+        "if_sid",
+        "if_matched_sid",
+        "if_group",
+        "if_level",
+        "if_matched_group",
+        "if_matched_level",
+        "decoded_as",
+        "field",
+        "same_rule",
+        "timeout",
+        "same_source_ip",
+        "same_source_port",
+        "same_dest_ip",
+        "same_field",
+        "same_id",
+        "same_user",
+        "same_location",
+        "same_agent",
+        "not_sid",
+        "not_group",
+        "not_level",
+        "not_regex",
+        "category",
+        "rule",
+        "syscheck",
+        "ar",
+        "group",
+        "mitre",
+        "options",
+        "var",
+        "list",
+        "check_all",
+        "check_any",
+        "check_diff",
+        "info",
+        "alert_opts",
+        "id",
+        "level",
+        "description",
+        "accumulate",
+        "relative_dirname",
         "details",
     }
     for child in root:
@@ -173,10 +222,21 @@ def validate_wazuh_decoder_xml(xml_text: str) -> dict[str, Any]:
     # A decoder that is not a parent (no `parent`) and not in a known form
     # (regex/json/program_name) is usually a mistake.
     child_tags = {c.tag for c in root}
-    recognized = {"regex", "json", "program_name", "prematch", "plugin_decoder",
-                  "order", "parent", "regex_offset", "accumulate"}
+    recognized = {
+        "regex",
+        "json",
+        "program_name",
+        "prematch",
+        "plugin_decoder",
+        "order",
+        "parent",
+        "regex_offset",
+        "accumulate",
+    }
     if "parent" not in root.attrib and not (child_tags & recognized):
-        errors.append("Decoder has no <regex>/<json>/<program_name> and is not a <parent> - it can't decode anything.")
+        errors.append(
+            "Decoder has no <regex>/<json>/<program_name> and is not a <parent> - it can't decode anything."
+        )
     return {"valid": not errors, "errors": errors}
 
 

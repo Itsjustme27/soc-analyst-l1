@@ -25,6 +25,7 @@ human-readable problems - empty means it should render. The engine runs the
 validators before creating anything AND after creation (reading the objects
 back), so a malformed dashboard is reported instead of claimed as success.
 """
+
 from __future__ import annotations
 
 import copy
@@ -35,15 +36,22 @@ PANEL_VERSION = "7.10.2"  # OSD 1.x/2.x dashboard panel schema (Kibana 7.10 line
 INDEX_REF_NAME = "kibanaSavedObjectMeta.searchSourceJSON.index"
 
 VALID_VIS_TYPES = ("histogram", "horizontal_bar", "line", "area", "pie", "metric", "table")
-_VIS_TYPE_ALIASES = {"bar": "histogram", "vertical_bar": "histogram", "column": "histogram",
-                     "donut": "pie", "count": "metric"}
+_VIS_TYPE_ALIASES = {
+    "bar": "histogram",
+    "vertical_bar": "histogram",
+    "column": "histogram",
+    "donut": "pie",
+    "count": "metric",
+}
 _XY_TYPES = ("histogram", "horizontal_bar", "line", "area")
 
 
 def normalize_vis_type(vis_type: str) -> str:
     t = _VIS_TYPE_ALIASES.get((vis_type or "").lower(), (vis_type or "").lower())
     if t not in VALID_VIS_TYPES:
-        raise ValueError(f"Unsupported visualization type '{vis_type}'. Use one of {VALID_VIS_TYPES}.")
+        raise ValueError(
+            f"Unsupported visualization type '{vis_type}'. Use one of {VALID_VIS_TYPES}."
+        )
     return t
 
 
@@ -59,22 +67,42 @@ def vis_params(vis_type: str, metric_label: str = "Count") -> dict[str, Any]:
     t = normalize_vis_type(vis_type)
     if t == "metric":
         return {
-            "addTooltip": True, "addLegend": False, "type": "metric",
+            "addTooltip": True,
+            "addLegend": False,
+            "type": "metric",
             "metric": {
-                "percentageMode": False, "useRanges": False, "colorSchema": "Green to Red",
-                "metricColorMode": "None", "colorsRange": [{"from": 0, "to": 10000}],
-                "labels": {"show": True}, "invertColors": False,
-                "style": {"bgFill": "#000", "bgColor": False, "labelColor": False,
-                          "subText": "", "fontSize": 60},
+                "percentageMode": False,
+                "useRanges": False,
+                "colorSchema": "Green to Red",
+                "metricColorMode": "None",
+                "colorsRange": [{"from": 0, "to": 10000}],
+                "labels": {"show": True},
+                "invertColors": False,
+                "style": {
+                    "bgFill": "#000",
+                    "bgColor": False,
+                    "labelColor": False,
+                    "subText": "",
+                    "fontSize": 60,
+                },
             },
         }
     if t == "table":
-        return {"perPage": 10, "showPartialRows": False, "showMetricsAtAllLevels": False,
-                "showTotal": False, "totalFunc": "sum", "percentageCol": "", "sort": {"columnIndex": None,
-                                                                                      "direction": None}}
+        return {
+            "perPage": 10,
+            "showPartialRows": False,
+            "showMetricsAtAllLevels": False,
+            "showTotal": False,
+            "totalFunc": "sum",
+            "percentageCol": "",
+            "sort": {"columnIndex": None, "direction": None},
+        }
     if t == "pie":
         return {
-            "type": "pie", "addTooltip": True, "addLegend": True, "legendPosition": "right",
+            "type": "pie",
+            "addTooltip": True,
+            "addLegend": True,
+            "legendPosition": "right",
             "isDonut": True,
             "labels": {"show": False, "values": True, "last_level": True, "truncate": 100},
         }
@@ -83,28 +111,57 @@ def vis_params(vis_type: str, metric_label: str = "Count") -> dict[str, Any]:
     return {
         "type": t,
         "grid": {"categoryLines": False},
-        "categoryAxes": [{
-            "id": "CategoryAxis-1", "type": "category",
-            "position": "left" if horizontal else "bottom", "show": True, "style": {},
-            "scale": {"type": "linear"}, "labels": _axis_label(True, 0), "title": {},
-        }],
-        "valueAxes": [{
-            "id": "ValueAxis-1", "name": "LeftAxis-1", "type": "value",
-            "position": "bottom" if horizontal else "left", "show": True, "style": {},
-            "scale": {"type": "linear", "mode": "normal"},
-            "labels": _axis_label(False, 0), "title": {"text": metric_label},
-        }],
-        "seriesParams": [{
-            "show": True, "type": series_type,
-            "mode": "stacked" if series_type == "histogram" else "normal",
-            "data": {"label": metric_label, "id": "1"}, "valueAxis": "ValueAxis-1",
-            "drawLinesBetweenPoints": True, "lineWidth": 2, "showCircles": True,
-            "interpolate": "linear",
-        }],
-        "addTooltip": True, "addLegend": True, "legendPosition": "right",
-        "times": [], "addTimeMarker": False,
+        "categoryAxes": [
+            {
+                "id": "CategoryAxis-1",
+                "type": "category",
+                "position": "left" if horizontal else "bottom",
+                "show": True,
+                "style": {},
+                "scale": {"type": "linear"},
+                "labels": _axis_label(True, 0),
+                "title": {},
+            }
+        ],
+        "valueAxes": [
+            {
+                "id": "ValueAxis-1",
+                "name": "LeftAxis-1",
+                "type": "value",
+                "position": "bottom" if horizontal else "left",
+                "show": True,
+                "style": {},
+                "scale": {"type": "linear", "mode": "normal"},
+                "labels": _axis_label(False, 0),
+                "title": {"text": metric_label},
+            }
+        ],
+        "seriesParams": [
+            {
+                "show": True,
+                "type": series_type,
+                "mode": "stacked" if series_type == "histogram" else "normal",
+                "data": {"label": metric_label, "id": "1"},
+                "valueAxis": "ValueAxis-1",
+                "drawLinesBetweenPoints": True,
+                "lineWidth": 2,
+                "showCircles": True,
+                "interpolate": "linear",
+            }
+        ],
+        "addTooltip": True,
+        "addLegend": True,
+        "legendPosition": "right",
+        "times": [],
+        "addTimeMarker": False,
         "labels": {"show": False},
-        "thresholdLine": {"show": False, "value": 10, "width": 1, "style": "full", "color": "#E7664C"},
+        "thresholdLine": {
+            "show": False,
+            "value": 10,
+            "width": 1,
+            "style": "full",
+            "color": "#E7664C",
+        },
     }
 
 
@@ -153,8 +210,12 @@ def normalize_aggs(aggs: list[dict[str, Any]]) -> list[dict[str, Any]]:
     return out
 
 
-def build_vis_state(title: str, vis_type: str, aggs: list[dict[str, Any]],
-                    extra_params: dict[str, Any] | None = None) -> str:
+def build_vis_state(
+    title: str,
+    vis_type: str,
+    aggs: list[dict[str, Any]],
+    extra_params: dict[str, Any] | None = None,
+) -> str:
     """Complete params for the type; caller-supplied params are applied only
     for keys the defaults don't define, so a partial axis/label block can
     never replace a complete default (the shallow-merge crash)."""
@@ -176,23 +237,44 @@ def _filters(query: dict[str, Any] | None, index_pattern_id: str) -> list[dict[s
     for clause in ((query or {}).get("bool") or {}).get("filter") or []:
         if "term" in clause:
             field = next(iter(clause["term"]))
-            out.append({"meta": {"index": index_pattern_id, "type": "phrase", "key": field,
-                                 "params": {"query": clause["term"][field]},
-                                 "negate": False, "disabled": False, "alias": None},
-                        "query": {"match_phrase": {field: clause["term"][field]}},
-                        "$state": {"store": "appState"}})
+            out.append(
+                {
+                    "meta": {
+                        "index": index_pattern_id,
+                        "type": "phrase",
+                        "key": field,
+                        "params": {"query": clause["term"][field]},
+                        "negate": False,
+                        "disabled": False,
+                        "alias": None,
+                    },
+                    "query": {"match_phrase": {field: clause["term"][field]}},
+                    "$state": {"store": "appState"},
+                }
+            )
         elif "range" in clause:
             field = next(iter(clause["range"]))
-            out.append({"meta": {"index": index_pattern_id, "type": "range", "key": field,
-                                 "params": clause["range"][field],
-                                 "negate": False, "disabled": False, "alias": None},
-                        "range": clause["range"],
-                        "$state": {"store": "appState"}})
+            out.append(
+                {
+                    "meta": {
+                        "index": index_pattern_id,
+                        "type": "range",
+                        "key": field,
+                        "params": clause["range"][field],
+                        "negate": False,
+                        "disabled": False,
+                        "alias": None,
+                    },
+                    "range": clause["range"],
+                    "$state": {"store": "appState"},
+                }
+            )
     return out
 
 
-def build_search_source(index_pattern_id: str, query: dict[str, Any] | None = None
-                        ) -> tuple[str, list[dict[str, Any]]]:
+def build_search_source(
+    index_pattern_id: str, query: dict[str, Any] | None = None
+) -> tuple[str, list[dict[str, Any]]]:
     """(searchSourceJSON, references) in the reference form: indexRefName +
     a references entry - never a raw `aggs` array."""
     ss = {
@@ -204,10 +286,15 @@ def build_search_source(index_pattern_id: str, query: dict[str, Any] | None = No
     return json.dumps(ss), refs
 
 
-def build_visualization_attributes(title: str, vis_type: str, aggs: list[dict[str, Any]],
-                                   index_pattern_id: str, query: dict[str, Any] | None = None,
-                                   description: str = "", extra_params: dict[str, Any] | None = None
-                                   ) -> tuple[dict[str, Any], list[dict[str, Any]]]:
+def build_visualization_attributes(
+    title: str,
+    vis_type: str,
+    aggs: list[dict[str, Any]],
+    index_pattern_id: str,
+    query: dict[str, Any] | None = None,
+    description: str = "",
+    extra_params: dict[str, Any] | None = None,
+) -> tuple[dict[str, Any], list[dict[str, Any]]]:
     ss, refs = build_search_source(index_pattern_id, query)
     attrs = {
         "title": title,
@@ -223,25 +310,35 @@ def build_visualization_attributes(title: str, vis_type: str, aggs: list[dict[st
 # --------------------------------------------------------------------------- #
 # dashboard
 # --------------------------------------------------------------------------- #
-def build_panels(vis_ids: list[str], width: int = 24, height: int = 15
-                 ) -> tuple[str, list[dict[str, Any]]]:
+def build_panels(
+    vis_ids: list[str], width: int = 24, height: int = 15
+) -> tuple[str, list[dict[str, Any]]]:
     """(panelsJSON, references) - 2-column grid, panelRefName -> reference."""
     panels, refs = [], []
     for i, vid in enumerate(vis_ids):
         idx = str(i + 1)
-        panels.append({
-            "version": PANEL_VERSION,
-            "gridData": {"x": (i % 2) * width, "y": (i // 2) * height, "w": width, "h": height, "i": idx},
-            "panelIndex": idx,
-            "embeddableConfig": {},
-            "panelRefName": f"panel_{i}",
-        })
+        panels.append(
+            {
+                "version": PANEL_VERSION,
+                "gridData": {
+                    "x": (i % 2) * width,
+                    "y": (i // 2) * height,
+                    "w": width,
+                    "h": height,
+                    "i": idx,
+                },
+                "panelIndex": idx,
+                "embeddableConfig": {},
+                "panelRefName": f"panel_{i}",
+            }
+        )
         refs.append({"name": f"panel_{i}", "type": "visualization", "id": vid})
     return json.dumps(panels), refs
 
 
-def build_dashboard_attributes(title: str, description: str, panels_json: str,
-                               time_from: str = "now-7d", time_to: str = "now") -> dict[str, Any]:
+def build_dashboard_attributes(
+    title: str, description: str, panels_json: str, time_from: str = "now-7d", time_to: str = "now"
+) -> dict[str, Any]:
     return {
         "title": title,
         "description": description,
@@ -253,8 +350,11 @@ def build_dashboard_attributes(title: str, description: str, panels_json: str,
         "timeFrom": time_from,
         "timeTo": time_to,
         "refreshInterval": {"pause": True, "value": 0},
-        "kibanaSavedObjectMeta": {"searchSourceJSON": json.dumps(
-            {"query": {"query": "", "language": "kuery"}, "filter": []})},
+        "kibanaSavedObjectMeta": {
+            "searchSourceJSON": json.dumps(
+                {"query": {"query": "", "language": "kuery"}, "filter": []}
+            )
+        },
     }
 
 
@@ -271,7 +371,9 @@ def _loads(text: Any, what: str, issues: list[str]) -> Any:
         return None
 
 
-def validate_visualization(obj: dict[str, Any], known_fields: dict[str, bool] | None = None) -> list[str]:
+def validate_visualization(
+    obj: dict[str, Any], known_fields: dict[str, bool] | None = None
+) -> list[str]:
     """`obj` is a saved object ({id?, attributes, references}). `known_fields`
     (name -> aggregatable) from the index pattern, when available, catches
     'Saved field parameter is now invalid'."""
@@ -283,10 +385,14 @@ def validate_visualization(obj: dict[str, Any], known_fields: dict[str, bool] | 
     if isinstance(vs, dict):
         t = vs.get("type")
         if t not in VALID_VIS_TYPES:
-            issues.append(f"{name}: visualization type '{t}' is not registered in OSD "
-                          f"(valid: {', '.join(VALID_VIS_TYPES)})")
+            issues.append(
+                f"{name}: visualization type '{t}' is not registered in OSD "
+                f"(valid: {', '.join(VALID_VIS_TYPES)})"
+            )
         params = vs.get("params") or {}
-        xy_like = t in _XY_TYPES or _VIS_TYPE_ALIASES.get(t) in _XY_TYPES or "categoryAxes" in params
+        xy_like = (
+            t in _XY_TYPES or _VIS_TYPE_ALIASES.get(t) in _XY_TYPES or "categoryAxes" in params
+        )
         if xy_like:
             for key in ("categoryAxes", "valueAxes", "seriesParams"):
                 if not params.get(key):
@@ -294,7 +400,9 @@ def validate_visualization(obj: dict[str, Any], known_fields: dict[str, bool] | 
             for key in ("categoryAxes", "valueAxes"):
                 for ax in params.get(key) or []:
                     if "labels" not in ax:
-                        issues.append(f"{name}: params.{key}[{ax.get('id')}] has no 'labels' (chart throws on render)")
+                        issues.append(
+                            f"{name}: params.{key}[{ax.get('id')}] has no 'labels' (chart throws on render)"
+                        )
         elif t == "pie" and "labels" not in params:
             issues.append(f"{name}: pie params.labels missing")
         elif t == "metric" and "style" not in (params.get("metric") or {}):
@@ -310,10 +418,14 @@ def validate_visualization(obj: dict[str, Any], known_fields: dict[str, bool] | 
             field = (a.get("params") or {}).get("field")
             if field and known_fields is not None:
                 if field not in known_fields:
-                    issues.append(f"{name}: field '{field}' is not in the index pattern's field list "
-                                  "(refresh the index pattern fields)")
+                    issues.append(
+                        f"{name}: field '{field}' is not in the index pattern's field list "
+                        "(refresh the index pattern fields)"
+                    )
                 elif not known_fields[field]:
-                    issues.append(f"{name}: field '{field}' is not aggregatable in the index pattern")
+                    issues.append(
+                        f"{name}: field '{field}' is not aggregatable in the index pattern"
+                    )
     meta = attrs.get("kibanaSavedObjectMeta") or {}
     ss = _loads(meta.get("searchSourceJSON", "{}"), f"{name}: searchSourceJSON", issues)
     if isinstance(ss, dict):
@@ -341,7 +453,9 @@ def validate_dashboard(obj: dict[str, Any]) -> list[str]:
         for i, p in enumerate(panels):
             gd = p.get("gridData")
             if not isinstance(gd, dict) or not all(k in gd for k in ("x", "y", "w", "h", "i")):
-                issues.append(f"{name}: panel {i} has no valid gridData {{x,y,w,h,i}} (legacy/invalid panel shape)")
+                issues.append(
+                    f"{name}: panel {i} has no valid gridData {{x,y,w,h,i}} (legacy/invalid panel shape)"
+                )
             if "panelIndex" not in p:
                 issues.append(f"{name}: panel {i} has no panelIndex")
             elif p["panelIndex"] in seen:
@@ -351,7 +465,9 @@ def validate_dashboard(obj: dict[str, Any]) -> list[str]:
             if not ref_name and not (p.get("id") and p.get("type")):
                 issues.append(f"{name}: panel {i} has neither panelRefName nor id/type")
             if ref_name and ref_name not in refs:
-                issues.append(f"{name}: panel {i} panelRefName '{ref_name}' has no matching reference")
+                issues.append(
+                    f"{name}: panel {i} panelRefName '{ref_name}' has no matching reference"
+                )
     elif panels is not None:
         issues.append(f"{name}: panelsJSON must be a list")
     if "optionsJSON" in attrs:

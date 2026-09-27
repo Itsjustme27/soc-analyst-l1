@@ -17,6 +17,7 @@ default, not as a general substitute for it.
 
 See rag/knowledge_base.py's `_embedding_function()` for how this is selected.
 """
+
 from __future__ import annotations
 
 import hashlib
@@ -37,7 +38,7 @@ def _tokenize(text: str) -> list[str]:
 def _embed_one(text: str, dims: int = DIMENSIONS) -> list[float]:
     vec = [0.0] * dims
     for token in _tokenize(text):
-        digest = hashlib.md5(token.encode("utf-8")).hexdigest()
+        digest = hashlib.md5(token.encode("utf-8"), usedforsecurity=False).hexdigest()
         h = int(digest, 16)
         idx = h % dims
         sign = 1.0 if (h // dims) % 2 == 0 else -1.0
@@ -80,6 +81,7 @@ def _register() -> None:
     """
     try:
         from chromadb.api.collection_configuration import known_embedding_functions
+
         known_embedding_functions[HashingEmbeddingFunction.name()] = HashingEmbeddingFunction
     except Exception:  # noqa: BLE001 - registry internals are not a public,
         # version-stable API; failing to register just means "single-process

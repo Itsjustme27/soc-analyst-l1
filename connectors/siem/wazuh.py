@@ -17,12 +17,15 @@ ca_cert at config/wazuh_indexer_ssl_certs/root-ca.pem.
 Alerts are read from the configured index (default `wazuh-alerts-*`) and
 mapped from Wazuh's document fields (rule.level, agent.name, data.srcip, ...).
 """
+
 from __future__ import annotations
-import requests
+
 from typing import Any
 
+import requests
+
 from config import cfg
-from connectors.siem.base import SIEMConnector, resolve_cfg, resolve_bool_cfg
+from connectors.siem.base import SIEMConnector, resolve_bool_cfg, resolve_cfg
 
 DEFAULT_INDEX = "wazuh-alerts-*"
 DEFAULT_RELATED_INDEX = "wazuh-archives-*"  # raw events, for correlation lookup
@@ -30,7 +33,8 @@ DEFAULT_QUERY_SIZE = 20
 
 
 def _looks_local(host: str) -> bool:
-    return any(marker in host for marker in ("localhost", "127.0.0.1", "0.0.0.0", "::1"))
+    # loopback *marker strings* for a dialect check, not a bind host
+    return any(marker in host for marker in ("localhost", "127.0.0.1", "0.0.0.0", "::1"))  # nosec B104
 
 
 def wazuh_severity(level: Any) -> str:
@@ -76,11 +80,12 @@ class WazuhConnector(SIEMConnector):
                 "explicitly pass password=admin if that's genuinely correct."
             )
         self.index = resolve_cfg(config, "index", cfg.WAZUH_INDEX) or DEFAULT_INDEX
-        self.related_index = resolve_cfg(config, "related_index", cfg.WAZUH_RELATED_INDEX) or DEFAULT_RELATED_INDEX
+        self.related_index = (
+            resolve_cfg(config, "related_index", cfg.WAZUH_RELATED_INDEX) or DEFAULT_RELATED_INDEX
+        )
         # Self-signed by default with these deployments; a ca_cert path wins.
-        self.verify = (
-            resolve_cfg(config, "ca_cert", cfg.WAZUH_CA_CERT)
-            or resolve_bool_cfg(config, "verify_ssl", cfg.WAZUH_VERIFY_SSL)
+        self.verify = resolve_cfg(config, "ca_cert", cfg.WAZUH_CA_CERT) or resolve_bool_cfg(
+            config, "verify_ssl", cfg.WAZUH_VERIFY_SSL
         )
         self.auth = requests.auth.HTTPBasicAuth(self.username, self.password)
 
@@ -100,7 +105,9 @@ class WazuhConnector(SIEMConnector):
         """Raw OpenSearch search against the indexer - public entrypoint used
         by the AI SOC engineer tool layer (tools/indexer.py). Returns the full
         response JSON (hits, aggregations, ...), not just the hit list."""
-        r = requests.post(
+        # The timeout kwarg is on the wrapped continuation line (a cfg-driven value
+        # bandit cannot statically resolve), so the flagged call is safe.
+        r = requests.post(  # nosec B113 - timeout= present on next line
             f"{self.host}/{index}/_search",
             auth=self.auth,
             json=body,
@@ -131,15 +138,18 @@ class WazuhConnector(SIEMConnector):
 
     # ------------------------------------------------------------------ #
     def get_new_alerts(self) -> list[dict[str, Any]]:
-        hits = self._search(self.index, {
-            "size": DEFAULT_QUERY_SIZE,
-            "sort": [{"timestamp": {"order": "desc"}}],
-            "query": {
-                "bool": {
-                    "must": [{"exists": {"field": "rule"}}],
-                }
+        hits = self._search(
+            self.index,
+            {
+                "size": DEFAULT_QUERY_SIZE,
+                "sort": [{"timestamp": {"order": "desc"}}],
+                "query": {
+                    "bool": {
+                        "must": [{"exists": {"field": "rule"}}],
+                    }
+                },
             },
-        })
+        )
         return [self._normalize(h["_source"], h["_id"]) for h in hits]
 
     def search_related_events(
@@ -165,11 +175,14 @@ class WazuhConnector(SIEMConnector):
         if should:
             query["bool"]["should"] = should
             query["bool"]["minimum_should_match"] = 1
-        hits = self._search(index, {
-            "size": 50,
-            "sort": [{"timestamp": {"order": "desc"}}],
-            "query": query,
-        })
+        hits = self._search(
+            index,
+            {
+                "size": 50,
+                "sort": [{"timestamp": {"order": "desc"}}],
+                "query": query,
+            },
+        )
         return [self._normalize(h["_source"], h["_id"]) for h in hits]
 
     def close_notable(self, event_id: str, status: str, comment: str) -> None:
@@ -202,19 +215,18 @@ class WazuhConnector(SIEMConnector):
         agent = src.get("agent") or {}
         data = src.get("data") or {}
         user = (
-            data.get("user") or data.get("srcuser")
-            or data.get("winuser") or data.get("linuxuser")
+            data.get("user") or data.get("srcuser") or data.get("winuser") or data.get("linuxuser")
         )
         return {
             "alert_id": src.get("id") or doc_id,
             "rule_id": rule.get("id") if isinstance(rule, dict) else None,
             "rule_name": (rule.get("description") if isinstance(rule, dict) else None)
-                or (rule.get("groups", [None])[0] if isinstance(rule, dict) else None)
-                or "Wazuh alert",
+            or (rule.get("groups", [None])[0] if isinstance(rule, dict) else None)
+            or "Wazuh alert",
             "severity": wazuh_severity(rule.get("level") if isinstance(rule, dict) else None),
             "description": src.get("full_log")
-                or (rule.get("description") if isinstance(rule, dict) else None)
-                or "",
+            or (rule.get("description") if isinstance(rule, dict) else None)
+            or "",
             "host": (agent.get("name") if isinstance(agent, dict) else None),
             "user": user,
             "src_ip": data.get("srcip") or data.get("src_ip"),

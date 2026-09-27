@@ -15,6 +15,7 @@ Hermetic tests for the LLM 429 / rate-limit hardening:
 
 Run: python -m unittest tests.test_llm_429 -v
 """
+
 from __future__ import annotations
 
 import os
@@ -34,6 +35,7 @@ from llm.openai_compat_provider import OpenAICompatProvider  # noqa: E402
 
 def _resp(status, headers=None, body=None):
     """Minimal requests.Response stand-in (raise_for_status + .json())."""
+
     class _FakeResp:
         def __init__(self, status, headers, body):
             self.status_code = status
@@ -44,7 +46,8 @@ def _resp(status, headers=None, body=None):
         def raise_for_status(self):
             if self.status_code >= 400:
                 raise requests.HTTPError(
-                    f"{self.status_code} Client Error: rate limited", response=self,
+                    f"{self.status_code} Client Error: rate limited",
+                    response=self,
                 )
 
         def json(self):
@@ -249,8 +252,9 @@ class TestProviderFallback(unittest.TestCase):
         prov = FreeLLMAPIProvider()
         prov.last_routed_via = "groq/openai/gpt-oss-120b"
         with (
-            mock.patch.object(prov, "_available_models",
-                              return_value=["auto", "claude-opus-4-5", "aion-3.0"]),
+            mock.patch.object(
+                prov, "_available_models", return_value=["auto", "claude-opus-4-5", "aion-3.0"]
+            ),
             mock.patch.object(cfg, "FREELLMAPI_FALLBACK_ENABLED", True),
         ):
             self.assertEqual(prov._select_fallback_model(), "claude-opus-4-5")
@@ -274,20 +278,26 @@ class TestSingleChatBudgeting(unittest.TestCase):
                 if mode == "tools_then_answer":
                     if self.calls == 1:
                         return LLMResponse(
-                            content="", tool_calls=[ToolCall(id="t1", name="get_alerts", input={})],
+                            content="",
+                            tool_calls=[ToolCall(id="t1", name="get_alerts", input={})],
                         )
                     return LLMResponse(
-                        content="", tool_calls=[ToolCall(id="t2", name="answer_user", input={"answer": "done"})],
+                        content="",
+                        tool_calls=[
+                            ToolCall(id="t2", name="answer_user", input={"answer": "done"})
+                        ],
                     )
                 # mode == "never_answers": keeps returning tool calls forever
                 return LLMResponse(
-                    content="", tool_calls=[ToolCall(id=f"t{self.calls}", name="get_alerts", input={})],
+                    content="",
+                    tool_calls=[ToolCall(id=f"t{self.calls}", name="get_alerts", input={})],
                 )
 
         return CountingLLM()
 
     def test_plain_answer_makes_exactly_one_call(self):
         from agent.chat_agent import ChatAgent
+
         llm = self._counting_llm("plain")
         agent = ChatAgent(siem=None, provider_id=None)
         agent.llm = llm
@@ -297,6 +307,7 @@ class TestSingleChatBudgeting(unittest.TestCase):
 
     def test_answer_via_tool_makes_bounded_calls(self):
         from agent.chat_agent import ChatAgent
+
         llm = self._counting_llm("tools_then_answer")
         agent = ChatAgent(siem=None, provider_id=None)
         agent.llm = llm
@@ -305,8 +316,8 @@ class TestSingleChatBudgeting(unittest.TestCase):
         self.assertEqual(res.reply, "done")
 
     def test_runaway_tool_loop_stops_at_budget(self):
-        from agent.chat_agent import ChatAgent
-        from agent.chat_agent import MAX_TOOL_TURNS
+        from agent.chat_agent import MAX_TOOL_TURNS, ChatAgent
+
         llm = self._counting_llm("never_answers")
         agent = ChatAgent(siem=None, provider_id=None)
         agent.llm = llm
@@ -324,6 +335,7 @@ class TestEngineerMalformedToolInput(unittest.TestCase):
 
     def _engineer(self, fake_llm):
         from agent.soc_engineer import SOCEngineer
+
         eng = SOCEngineer()
         eng.llm = fake_llm
         return eng
@@ -335,6 +347,7 @@ class TestEngineerMalformedToolInput(unittest.TestCase):
                     content="",
                     tool_calls=[ToolCall(id="t1", name="answer_user", input=True)],
                 )
+
         res = self._engineer(FakeLLM()).chat(user_message="hi")
         self.assertEqual(res.reply, "")
         # The bool was normalized to {} in the transcript, not stored raw.
@@ -348,13 +361,20 @@ class TestEngineerMalformedToolInput(unittest.TestCase):
             def chat(self, **kw):
                 self.calls += 1
                 if self.calls == 1:
-                    return LLMResponse(content="", tool_calls=[
-                        ToolCall(id="t1", name="design_detection_dashboard", input=False)])
-                return LLMResponse(content="", tool_calls=[
-                    ToolCall(id="t2", name="answer_user", input={"answer": "done"})])
+                    return LLMResponse(
+                        content="",
+                        tool_calls=[
+                            ToolCall(id="t1", name="design_detection_dashboard", input=False)
+                        ],
+                    )
+                return LLMResponse(
+                    content="",
+                    tool_calls=[ToolCall(id="t2", name="answer_user", input={"answer": "done"})],
+                )
 
-        with mock.patch("agent.soc_engineer.run_tool",
-                        return_value={"status": "ok", "result": {}}) as run:
+        with mock.patch(
+            "agent.soc_engineer.run_tool", return_value={"status": "ok", "result": {}}
+        ) as run:
             res = self._engineer(FakeLLM()).chat(user_message="hi")
         # The registry saw {} (not the raw bool); its own param validation
         # would report the missing-parameter error back to the model.
@@ -372,6 +392,7 @@ class TestEngineerMalformedToolInput(unittest.TestCase):
                     content="",
                     tool_calls=[ToolCall(id="t1", name="answer_user", input=False)],
                 )
+
         agent = ChatAgent(siem=None, provider_id=None)
         agent.llm = FakeLLM()
         res = agent.chat(user_message="hi")
@@ -388,17 +409,21 @@ class TestTracingNoSecrets(unittest.TestCase):
                 "llm.openai_compat_provider.requests.post",
                 side_effect=[
                     _resp(429, headers={"Retry-After": "2"}),
-                    _resp(200, body=_chat_body(
-                        content="hi",
-                        usage={"prompt_tokens": 3, "completion_tokens": 2, "total_tokens": 5},
-                    )),
+                    _resp(
+                        200,
+                        body=_chat_body(
+                            content="hi",
+                            usage={"prompt_tokens": 3, "completion_tokens": 2, "total_tokens": 5},
+                        ),
+                    ),
                 ],
             ),
             mock.patch("llm.openai_compat_provider.time.sleep"),
         ):
             with self.assertLogs("soc.llm", level="INFO") as logs:
                 OpenAICompatProvider().chat(
-                    **_chat_call({"messages": [{"role": "user", "content": prompt_marker}]}))
+                    **_chat_call({"messages": [{"role": "user", "content": prompt_marker}]})
+                )
 
         joined = "\n".join(logs.output)
         # Structured fields present for the try, retry, and done events.
@@ -412,7 +437,8 @@ class TestTracingNoSecrets(unittest.TestCase):
         # One consistent request_id threads through all three events.
         ids = {
             line.split('"request_id": "')[1].split('"')[0]
-            for line in logs.output if '"request_id": "' in line
+            for line in logs.output
+            if '"request_id": "' in line
         }
         self.assertEqual(len(ids), 1)
         # ... and secrets never leak.
@@ -424,15 +450,21 @@ class TestApiChatMaps429(unittest.TestCase):
     @classmethod
     def setUpClass(cls):
         from dashboard import app
+
         app.config["TESTING"] = True
         cls.client = app.test_client()
 
     def test_upstream_429_returns_http_429_not_500(self):
         from agent.chat_agent import ChatAgent
+
         with mock.patch.object(
-            ChatAgent, "chat",
+            ChatAgent,
+            "chat",
             side_effect=LLMRateLimitedError(
-                "rate limited", status=429, retry_after=12.0, request_id="req123",
+                "rate limited",
+                status=429,
+                retry_after=12.0,
+                request_id="req123",
             ),
         ):
             r = self.client.post("/api/chat", json={"message": "hello"})

@@ -16,7 +16,9 @@ corrupt future triage. Batching + review gives you a checkpoint to catch
 that before it goes live. A human should spot-check distilled lessons
 before this runs unattended (see review_pending_lessons in main.py).
 """
+
 from __future__ import annotations
+
 import json
 import time
 from pathlib import Path
@@ -49,9 +51,15 @@ class MemoryStore:
         self.feedback_path.parent.mkdir(parents=True, exist_ok=True)
 
     # ------------------------------------------------------------------ #
-    def capture_feedback(self, case_id: str, alert: dict[str, Any],
-                          agent_verdict: dict[str, Any], analyst_verdict: str,
-                          analyst_reasoning: str, analyst: str = "") -> None:
+    def capture_feedback(
+        self,
+        case_id: str,
+        alert: dict[str, Any],
+        agent_verdict: dict[str, Any],
+        analyst_verdict: str,
+        analyst_reasoning: str,
+        analyst: str = "",
+    ) -> None:
         record = {
             "case_id": case_id,
             "timestamp": time.time(),
@@ -74,7 +82,9 @@ class MemoryStore:
             f"Analyst verdict: {analyst_verdict}\n"
             f"Analyst reasoning: {analyst_reasoning}"
         )
-        self.kb.add("cases", case_text, {"case_id": case_id, "verdict": analyst_verdict}, doc_id=case_id)
+        self.kb.add(
+            "cases", case_text, {"case_id": case_id, "verdict": analyst_verdict}, doc_id=case_id
+        )
 
     # ------------------------------------------------------------------ #
     def _load_recent_feedback(self, since_ts: float) -> list[dict[str, Any]]:
@@ -101,7 +111,9 @@ class MemoryStore:
         provider = get_provider()
         text = provider.chat_text(
             system=DISTILL_SYSTEM_PROMPT,
-            messages=[{"role": "user", "content": json.dumps(disagreements, default=str, indent=2)}],
+            messages=[
+                {"role": "user", "content": json.dumps(disagreements, default=str, indent=2)}
+            ],
             max_tokens=1500,
         )
         try:
@@ -109,9 +121,11 @@ class MemoryStore:
         except json.JSONDecodeError:
             # model wrapped it in prose/markdown fences despite instructions
             start, end = text.find("["), text.rfind("]")
-            return json.loads(text[start:end + 1]) if start != -1 else []
+            return json.loads(text[start : end + 1]) if start != -1 else []
 
-    def approve_and_store_lesson(self, lesson_text: str, metadata: dict[str, Any], approved_by: str = "") -> str:
+    def approve_and_store_lesson(
+        self, lesson_text: str, metadata: dict[str, Any], approved_by: str = ""
+    ) -> str:
         """Call this only after a human has reviewed the candidate lesson."""
         if approved_by:
             metadata = {**metadata, "approved_by": approved_by}

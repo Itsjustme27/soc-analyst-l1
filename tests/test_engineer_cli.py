@@ -7,6 +7,7 @@ runs. The real tool loop and registry are exercised in test 4 (live step
 rendering) with a stubbed Wazuh API; audit writes are mocked so tests never
 touch data/*.
 """
+
 from __future__ import annotations
 
 import io
@@ -14,24 +15,28 @@ import json
 import os
 import tempfile
 import unittest
-from contextlib import redirect_stdout, contextmanager
+from contextlib import contextmanager, redirect_stdout
 from pathlib import Path
 from unittest import mock
 
 os.environ.setdefault("MOCK_MODE", "true")
 os.environ.setdefault("LLM_PROVIDER", "mock")
 
+import scripts_engineer_cli as cli_mod  # noqa: E402
 from config import cfg  # noqa: E402
 from llm.base import LLMResponse, ToolCall  # noqa: E402
 
-import scripts_engineer_cli as cli_mod  # noqa: E402
-
 
 def _answer(message: str, data: dict | None = None) -> LLMResponse:
-    return LLMResponse(tool_calls=[ToolCall(
-        id="t", name="answer_user",
-        input={"answer": message, "data": data or {}},
-    )])
+    return LLMResponse(
+        tool_calls=[
+            ToolCall(
+                id="t",
+                name="answer_user",
+                input={"answer": message, "data": data or {}},
+            )
+        ]
+    )
 
 
 class ScriptedModel:
@@ -54,12 +59,13 @@ def _engineer(model: ScriptedModel, wazuh: mock.MagicMock | None = None):
     """Patch the LLM provider + SIEM clients + audit so nothing touches the
     real manager, chroma, or data/* audit files. Yields (wazuh, audit_mock)."""
     wazuh = wazuh or mock.MagicMock()
-    wazuh.get_rules.return_value = {
-        "data": {"affected_items": [], "total_affected_items": 0}}
-    with mock.patch("agent.soc_engineer.get_provider", return_value=model), \
-         mock.patch("agent.soc_engineer.WazuhManagerAPI", return_value=wazuh), \
-         mock.patch("agent.soc_engineer.IndexerClient", return_value=mock.MagicMock()), \
-         mock.patch("audit.audit_log") as am:
+    wazuh.get_rules.return_value = {"data": {"affected_items": [], "total_affected_items": 0}}
+    with (
+        mock.patch("agent.soc_engineer.get_provider", return_value=model),
+        mock.patch("agent.soc_engineer.WazuhManagerAPI", return_value=wazuh),
+        mock.patch("agent.soc_engineer.IndexerClient", return_value=mock.MagicMock()),
+        mock.patch("audit.audit_log") as am,
+    ):
         yield wazuh, am
 
 
@@ -81,11 +87,9 @@ class TestCliOneShot(unittest.TestCase):
     def test_every_turn_is_audited_with_skills_and_session(self):
         model = ScriptedModel([_answer("done")])
         with _engineer(model) as (_, am):
-            code, _ = _run(["-m", "hi", "--with-skill", "mitre-mapping",
-                            "--session", "s1"])
+            code, _ = _run(["-m", "hi", "--with-skill", "mitre-mapping", "--session", "s1"])
         self.assertEqual(code, 0)
-        cli_rows = [c for c in am.call_args_list
-                    if c.kwargs.get("tool") == "cli"]
+        cli_rows = [c for c in am.call_args_list if c.kwargs.get("tool") == "cli"]
         self.assertEqual(len(cli_rows), 1)
         row = cli_rows[0]
         self.assertEqual(row.kwargs["action"], "engineer_turn")
@@ -110,8 +114,10 @@ class TestCliOneShot(unittest.TestCase):
     def test_tool_budget_exhaustion_exits_two(self):
         # a model that never terminates: after MAX_TOOL_TURNS the loop yields
         # the budget reply (unknown tool -> error result, loop continues).
-        script = [LLMResponse(tool_calls=[ToolCall(id="t", name="not_a_real_tool", input={})])
-                  for _ in range(12)]
+        script = [
+            LLMResponse(tool_calls=[ToolCall(id="t", name="not_a_real_tool", input={})])
+            for _ in range(12)
+        ]
         model = ScriptedModel(script)
         with _engineer(model):
             code, out = _run(["-m", "hi"])
@@ -183,24 +189,37 @@ class TestCliSessions(unittest.TestCase):
 
 class TestCliProposals(unittest.TestCase):
     def test_list_proposals_pending(self):
-        with mock.patch("approvals.list_proposals",
-                        return_value=[{"id": "appr-1", "action": "create_wazuh_rule",
-                                       "status": "pending", "permission": "propose",
-                                       "created_at": "2026-01-01T00:00:00",
-                                       "reason": "detect web shell"}]):
+        with mock.patch(
+            "approvals.list_proposals",
+            return_value=[
+                {
+                    "id": "appr-1",
+                    "action": "create_wazuh_rule",
+                    "status": "pending",
+                    "permission": "propose",
+                    "created_at": "2026-01-01T00:00:00",
+                    "reason": "detect web shell",
+                }
+            ],
+        ):
             code, out = _run(["--list-proposals", "pending"])
         self.assertEqual(code, 0)
         self.assertIn("appr-1", out)
         self.assertIn("create_wazuh_rule", out)
 
     def test_approve_flag_wires_approvals(self):
-        with mock.patch("approvals.approve", return_value={"id": "appr-1", "status": "approved"}) as ap, \
-             mock.patch("approvals.public_view", side_effect=lambda r: r), \
-             mock.patch("audit.audit_log") as am:
+        with (
+            mock.patch(
+                "approvals.approve", return_value={"id": "appr-1", "status": "approved"}
+            ) as ap,
+            mock.patch("approvals.public_view", side_effect=lambda r: r),
+            mock.patch("audit.audit_log") as am,
+        ):
             code, _ = _run(["--approve", "appr-1"])
         self.assertEqual(code, 0)
-        ap.assert_called_once_with("appr-1", by=cfg.ENGINE_USER, identity_verified=False,
-                                   path=cfg.APPROVALS_PATH)
+        ap.assert_called_once_with(
+            "appr-1", by=cfg.ENGINE_USER, identity_verified=False, path=cfg.APPROVALS_PATH
+        )
         # the human approval act itself lands in the audit trail (UI parity)
         approved = [c for c in am.call_args_list if c.kwargs.get("action") == "proposal_approved"]
         self.assertEqual(len(approved), 1)
@@ -215,16 +234,18 @@ class TestCliProposals(unittest.TestCase):
         def _deny(*a, **kw):
             raise approvals_mod.ApprovalPolicyError("no self-approval")
 
-        with mock.patch("approvals.approve", side_effect=_deny), \
-             mock.patch("audit.audit_log"):
+        with mock.patch("approvals.approve", side_effect=_deny), mock.patch("audit.audit_log"):
             code, out = _run(["--approve", "appr-1"])
         self.assertEqual(code, 1)
         self.assertIn("policy", out)
 
     def test_execute_forwards_confirm_flag(self):
-        with mock.patch("approval_executor.execute_proposal",
-                        return_value={"ok": True, "http_status": 200}) as ex, \
-             mock.patch("approvals.get_proposal"):
+        with (
+            mock.patch(
+                "approval_executor.execute_proposal", return_value={"ok": True, "http_status": 200}
+            ) as ex,
+            mock.patch("approvals.get_proposal"),
+        ):
             code_no, _ = _run(["--execute", "appr-1"])
             code_yes, _ = _run(["--execute", "appr-1", "--confirm"])
         self.assertEqual(code_no, 0)
@@ -250,8 +271,7 @@ class TestCliArgparse(unittest.TestCase):
 class TestCliLiveToolStep(unittest.TestCase):
     def test_tool_call_rendered_and_executed(self):
         script = [
-            LLMResponse(tool_calls=[ToolCall(id="t1", name="get_wazuh_rules",
-                                             input={"limit": 1})]),
+            LLMResponse(tool_calls=[ToolCall(id="t1", name="get_wazuh_rules", input={"limit": 1})]),
             _answer("rules listed"),
         ]
         model = ScriptedModel(script)
@@ -270,7 +290,8 @@ class TestCliSkillOps(unittest.TestCase):
             src.mkdir()
             (src / "SKILL.md").write_text(
                 "---\nname: stealth-rule\ndescription: stealthy detection\nversion: 1.0.0\n---\n# Stealth\nDetect stealthy stuff.\n",
-                encoding="utf-8")
+                encoding="utf-8",
+            )
             with mock.patch("agent.skills.DEFAULT_SKILLS_ROOT", Path(root)):
                 code, out = _run(["--add-skill", str(src)])
             self.assertEqual(code, 0)
@@ -301,23 +322,33 @@ class TestCliSkillOps(unittest.TestCase):
 
 class TestCliRejectDetail(unittest.TestCase):
     def test_reject_flag_wires_and_audits(self):
-        with mock.patch("approvals.reject", return_value={"id": "appr-1", "status": "rejected"}) as rj, \
-             mock.patch("approvals.public_view", side_effect=lambda r: r), \
-             mock.patch("audit.audit_log") as am:
+        with (
+            mock.patch(
+                "approvals.reject", return_value={"id": "appr-1", "status": "rejected"}
+            ) as rj,
+            mock.patch("approvals.public_view", side_effect=lambda r: r),
+            mock.patch("audit.audit_log") as am,
+        ):
             code, _ = _run(["--reject", "appr-1", "--reason", "too noisy"])
         self.assertEqual(code, 0)
-        rj.assert_called_once_with("appr-1", by=cfg.ENGINE_USER,
-                                   reason="too noisy", path=cfg.APPROVALS_PATH)
+        rj.assert_called_once_with(
+            "appr-1", by=cfg.ENGINE_USER, reason="too noisy", path=cfg.APPROVALS_PATH
+        )
         rej = [c for c in am.call_args_list if c.kwargs.get("action") == "proposal_rejected"]
         self.assertEqual(len(rej), 1)
         self.assertEqual(rej[0].kwargs["result"]["reason"], "too noisy")
         self.assertEqual(rej[0].kwargs["permission"], "human")
 
     def test_proposal_detail_flag(self):
-        with mock.patch("approvals.get_proposal",
-                        return_value={"id": "appr-1", "action": "create_wazuh_rule",
-                                      "generated_config": "<rule/>",
-                                      "validation": {"valid": True}}):
+        with mock.patch(
+            "approvals.get_proposal",
+            return_value={
+                "id": "appr-1",
+                "action": "create_wazuh_rule",
+                "generated_config": "<rule/>",
+                "validation": {"valid": True},
+            },
+        ):
             code, out = _run(["--proposal", "appr-1"])
         self.assertEqual(code, 0)
         self.assertIn("appr-1", out)
@@ -353,10 +384,16 @@ class TestCliAutoSkills(unittest.TestCase):
 
 class TestCliTerminalOps(unittest.TestCase):
     def _cli(self):
-        return cli_mod.EngineerCLI(mock.MagicMock(
-            user="analyst", with_skill=[], session=None, resume=False,
-            json=False, auto_skills=False,
-        ))
+        return cli_mod.EngineerCLI(
+            mock.MagicMock(
+                user="analyst",
+                with_skill=[],
+                session=None,
+                resume=False,
+                json=False,
+                auto_skills=False,
+            )
+        )
 
     def test_pending_count_reads_approvals_store(self):
         cli = self._cli()
@@ -368,9 +405,16 @@ class TestCliTerminalOps(unittest.TestCase):
     def test_manager_status_runs_read_tool(self):
         wazuh = mock.MagicMock()
         wazuh.get_manager_status.return_value = {
-            "data": {"affected_items": [{"wazuh-analysisd": "running",
-                                         "wazuh-db": "running",
-                                         "wazuh-csyslogd": "stopped"}]}}
+            "data": {
+                "affected_items": [
+                    {
+                        "wazuh-analysisd": "running",
+                        "wazuh-db": "running",
+                        "wazuh-csyslogd": "stopped",
+                    }
+                ]
+            }
+        }
         wazuh.base_url = "https://mock:55000"
         model = ScriptedModel([])  # never called - /status does not chat
         with _engineer(model, wazuh=wazuh) as (_ctx_wazuh, _):
@@ -383,6 +427,35 @@ class TestCliTerminalOps(unittest.TestCase):
         self.assertIn("running: wazuh-analysisd, wazuh-db", out)
         self.assertIn("stopped: wazuh-csyslogd", out)
         wazuh.get_manager_status.assert_called_once()
+
+
+class TestCliFindToolsRender(unittest.TestCase):
+    """Regression for scripts_engineer_cli.py:410: the find_tools event line
+    used a \\u2026 escape inside an f-string *expression* part, which is a
+    SyntaxError on Python 3.11 (only legal from 3.12+, PEP 701). The literal
+    now lives outside the expression; these tests pin the rendered output."""
+
+    def _render(self, found: list[str]) -> str:
+        cli = cli_mod.EngineerCLI.__new__(cli_mod.EngineerCLI)
+        cli.json_mode = False
+        buf = io.StringIO()
+        with redirect_stdout(buf):
+            cli._on_event("find_tools", {"query": "ssh brute force", "found": found})
+        return buf.getvalue()
+
+    def test_fewer_than_seven_results_no_ellipsis(self):
+        out = self._render(["a", "b", "c"])
+        self.assertTrue(out.endswith("a, b, c\n"), out)
+        self.assertNotIn("\u2026", out)
+
+    def test_empty_results_render_nothing(self):
+        out = self._render([])
+        self.assertTrue(out.endswith("nothing\n"), out)
+        self.assertNotIn("\u2026", out)
+
+    def test_more_than_six_results_truncate_with_ellipsis(self):
+        out = self._render(["a", "b", "c", "d", "e", "f", "g"])
+        self.assertTrue(out.endswith("a, b, c, d, e, f \u2026\n"), out)
 
 
 if __name__ == "__main__":

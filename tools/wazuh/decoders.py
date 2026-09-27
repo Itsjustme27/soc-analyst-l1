@@ -5,6 +5,7 @@ Read tools (get_wazuh_decoders) are READ. Write tools manage decoders through
 the file API (PUT /decoders/files/local_decoder.xml on 4.14): merge + diff +
 approval-gated execution, mirroring the rules flow.
 """
+
 from __future__ import annotations
 
 from typing import Any
@@ -41,8 +42,10 @@ def _fetch_local_decoders(ctx: ToolContext) -> str:
 
 class GetWazuhDecoders(BaseWazuhTool):
     name = "get_wazuh_decoders"
-    description = ("List Wazuh decoders from the manager (optional search/filename filters). "
-                   "Use before creating a rule to see which decoder already parses the log source.")
+    description = (
+        "List Wazuh decoders from the manager (optional search/filename filters). "
+        "Use before creating a rule to see which decoder already parses the log source."
+    )
     input_schema = {
         "type": "object",
         "properties": {
@@ -58,21 +61,27 @@ class GetWazuhDecoders(BaseWazuhTool):
         p = self.validate(params)
         limit = min(int(p.get("limit", 50) or 50), 500)
         try:
-            resp = ctx.wazuh.get_decoders(limit=limit, search=p.get("search"),
-                                          filename=p.get("filename"))
+            resp = ctx.wazuh.get_decoders(
+                limit=limit, search=p.get("search"), filename=p.get("filename")
+            )
         except Exception as e:  # noqa: BLE001
             raise ToolError(f"Failed to fetch decoders: {e}") from e
         data = resp.get("data", {})
         decoders = [_decoder_summary(d) for d in data.get("affected_items", [])]
-        return {"count": len(decoders), "total": data.get("total_affected_items", len(decoders)),
-                "decoders": decoders}
+        return {
+            "count": len(decoders),
+            "total": data.get("total_affected_items", len(decoders)),
+            "decoders": decoders,
+        }
 
 
 class CreateWazuhDecoder(BaseWazuhTool):
     name = "create_wazuh_decoder"
-    description = ("Create a new Wazuh decoder in local_decoder.xml from its XML definition. "
-                   "Validates, merges, and diffs. WRITE: requires human approval. Manager restart "
-                   "needed after execution (own approval).")
+    description = (
+        "Create a new Wazuh decoder in local_decoder.xml from its XML definition. "
+        "Validates, merges, and diffs. WRITE: requires human approval. Manager restart "
+        "needed after execution (own approval)."
+    )
     input_schema = {
         "type": "object",
         "properties": {
@@ -89,13 +98,17 @@ class CreateWazuhDecoder(BaseWazuhTool):
         xml = str(p["decoder_xml"]).strip()
         validation = validate_wazuh_decoder_xml(xml)
         if not validation["valid"]:
-            raise ToolError("Decoder failed static validation:\n- " + "\n- ".join(validation["errors"]))
+            raise ToolError(
+                "Decoder failed static validation:\n- " + "\n- ".join(validation["errors"])
+            )
         name = decoder_name_from_xml(xml)
 
         current = _fetch_local_decoders(ctx)
         if not p.get("overwrite"):
-            if name and f"<decoder name=\"{name}\"" in current:
-                raise ToolError(f"Decoder '{name}' already exists - set overwrite=true after review.")
+            if name and f'<decoder name="{name}"' in current:
+                raise ToolError(
+                    f"Decoder '{name}' already exists - set overwrite=true after review."
+                )
         new_content, issues = merge_decoder(current, xml)
         if issues and new_content == current:
             raise ToolError("; ".join(issues))
@@ -106,24 +119,40 @@ class CreateWazuhDecoder(BaseWazuhTool):
         proposed = {
             "action": "create_wazuh_decoder",
             "reason": p.get("reason", ""),
-            "payload": {"decoder_xml": xml, "overwrite": bool(p.get("overwrite")),
-                        "reason": p.get("reason", "")},
+            "payload": {
+                "decoder_xml": xml,
+                "overwrite": bool(p.get("overwrite")),
+                "reason": p.get("reason", ""),
+            },
             "permission": self.permission.value,
         }
         proposed["generated_config"] = new_content
-        proposed["validation"] = {"valid": True, **validation, "issues": issues, "diff": diff,
-                                  "next_steps": ["restart_wazuh_manager (own approval)",
-                                                 "run_wazuh_logtest to validate decode"]}
+        proposed["validation"] = {
+            "valid": True,
+            **validation,
+            "issues": issues,
+            "diff": diff,
+            "next_steps": [
+                "restart_wazuh_manager (own approval)",
+                "run_wazuh_logtest to validate decode",
+            ],
+        }
         ctx.approve_or_raise(proposed)
         resp = ctx.wazuh.put_decoders_file(LOCAL_DECODER_FILE, new_content)
-        return {"status": "executed", "decoder": name, "restart_required": True,
-                "detail": resp.get("message")}
+        return {
+            "status": "executed",
+            "decoder": name,
+            "restart_required": True,
+            "detail": resp.get("message"),
+        }
 
 
 class ModifyWazuhDecoder(BaseWazuhTool):
     name = "modify_wazuh_decoder"
-    description = ("Modify an existing decoder in local_decoder.xml. WRITE: validates, diffs, "
-                   "and requires human approval.")
+    description = (
+        "Modify an existing decoder in local_decoder.xml. WRITE: validates, diffs, "
+        "and requires human approval."
+    )
     input_schema = {
         "type": "object",
         "properties": {
@@ -140,7 +169,9 @@ class ModifyWazuhDecoder(BaseWazuhTool):
         xml = str(p["decoder_xml"]).strip()
         validation = validate_wazuh_decoder_xml(xml)
         if not validation["valid"]:
-            raise ToolError("Decoder failed static validation:\n- " + "\n- ".join(validation["errors"]))
+            raise ToolError(
+                "Decoder failed static validation:\n- " + "\n- ".join(validation["errors"])
+            )
         current = _fetch_local_decoders(ctx)
         new_content, found, _issues = replace_decoder(current, p["decoder_name"], xml)
         if not found:
@@ -149,23 +180,35 @@ class ModifyWazuhDecoder(BaseWazuhTool):
         proposed = {
             "action": "modify_wazuh_decoder",
             "reason": p.get("reason", ""),
-            "payload": {"decoder_name": p["decoder_name"], "decoder_xml": xml,
-                        "reason": p.get("reason", "")},
+            "payload": {
+                "decoder_name": p["decoder_name"],
+                "decoder_xml": xml,
+                "reason": p.get("reason", ""),
+            },
             "permission": self.permission.value,
         }
         proposed["generated_config"] = new_content
-        proposed["validation"] = {"valid": True, "diff": diff,
-                                  "next_steps": ["restart_wazuh_manager (own approval)"]}
+        proposed["validation"] = {
+            "valid": True,
+            "diff": diff,
+            "next_steps": ["restart_wazuh_manager (own approval)"],
+        }
         ctx.approve_or_raise(proposed)
         resp = ctx.wazuh.put_decoders_file(LOCAL_DECODER_FILE, new_content)
-        return {"status": "executed", "decoder": p["decoder_name"], "restart_required": True,
-                "detail": resp.get("message")}
+        return {
+            "status": "executed",
+            "decoder": p["decoder_name"],
+            "restart_required": True,
+            "detail": resp.get("message"),
+        }
 
 
 class DeleteWazuhDecoder(BaseWazuhTool):
     name = "delete_wazuh_decoder"
-    description = ("Remove a decoder from local_decoder.xml by name. HIGH RISK (EXECUTE): requires "
-                   "approval AND explicit confirmation.")
+    description = (
+        "Remove a decoder from local_decoder.xml by name. HIGH RISK (EXECUTE): requires "
+        "approval AND explicit confirmation."
+    )
     input_schema = {
         "type": "object",
         "properties": {
@@ -189,10 +232,17 @@ class DeleteWazuhDecoder(BaseWazuhTool):
             "payload": {"decoder_name": p["decoder_name"], "reason": p.get("reason", "")},
             "permission": self.permission.value,
         }
-        proposed["validation"] = {"valid": True, "diff": diff,
-                                  "note": "Deletion requires approval + confirmation.",
-                                  "next_steps": ["restart_wazuh_manager (own approval)"]}
+        proposed["validation"] = {
+            "valid": True,
+            "diff": diff,
+            "note": "Deletion requires approval + confirmation.",
+            "next_steps": ["restart_wazuh_manager (own approval)"],
+        }
         ctx.approve_or_raise(proposed)
         resp = ctx.wazuh.put_decoders_file(LOCAL_DECODER_FILE, new_content)
-        return {"status": "executed", "decoder": p["decoder_name"], "restart_required": True,
-                "detail": resp.get("message")}
+        return {
+            "status": "executed",
+            "decoder": p["decoder_name"],
+            "restart_required": True,
+            "detail": resp.get("message"),
+        }

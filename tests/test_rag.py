@@ -5,7 +5,9 @@ model - that's the whole point of this module.
 
 Run: python -m unittest tests.test_rag -v
 """
+
 from __future__ import annotations
+
 import os
 import shutil
 import tempfile
@@ -18,6 +20,7 @@ os.environ.setdefault("LLM_PROVIDER", "mock")
 class TestHashingEmbeddingFunction(unittest.TestCase):
     def test_deterministic(self):
         from rag.embeddings import HashingEmbeddingFunction
+
         ef = HashingEmbeddingFunction()
         a = [list(v) for v in ef(["brute force login attempt"])]
         b = [list(v) for v in ef(["brute force login attempt"])]
@@ -25,14 +28,17 @@ class TestHashingEmbeddingFunction(unittest.TestCase):
 
     def test_different_text_different_vector(self):
         from rag.embeddings import HashingEmbeddingFunction
+
         ef = HashingEmbeddingFunction()
         a = [list(v) for v in ef(["brute force login attempt"])]
         b = [list(v) for v in ef(["completely unrelated malware detection"])]
         self.assertNotEqual(a, b)
 
     def test_vectors_are_normalized(self):
-        from rag.embeddings import HashingEmbeddingFunction
         import math
+
+        from rag.embeddings import HashingEmbeddingFunction
+
         ef = HashingEmbeddingFunction()
         [vec] = ef(["some text with several different words in it"])
         norm = math.sqrt(sum(v * v for v in vec))
@@ -40,13 +46,29 @@ class TestHashingEmbeddingFunction(unittest.TestCase):
 
     def test_empty_text_does_not_crash(self):
         from rag.embeddings import HashingEmbeddingFunction
+
         ef = HashingEmbeddingFunction()
         [vec] = ef([""])
         self.assertEqual(len(vec), 256)
 
+    def test_md5_bucket_marked_non_security(self):
+        # The hashing-fallback embedding buckets tokens via md5; it must be
+        # flagged usedforsecurity=False so scanners never mistake it for a
+        # cryptographic use (and FIPS mode won't reject it).
+        import hashlib
+        from unittest import mock
+
+        from rag.embeddings import _embed_one
+
+        with mock.patch("hashlib.md5", wraps=hashlib.md5) as md5:
+            vec = _embed_one("brute force login")
+        self.assertEqual(len(vec), 256)
+        self.assertTrue(any(c.kwargs.get("usedforsecurity") is False for c in md5.call_args_list))
+
     def test_shared_words_are_closer_than_disjoint_words(self):
         # crude sanity check of the actual retrieval property this is used for
         from rag.embeddings import HashingEmbeddingFunction
+
         ef = HashingEmbeddingFunction()
         query = ef(["brute force login MFA bypass"])[0]
         close = ef(["brute force login playbook MFA check"])[0]
@@ -67,8 +89,9 @@ class TestKnowledgeBaseEmbeddingSelection(unittest.TestCase):
 
     def test_mock_mode_auto_selects_hashing(self):
         from config import cfg
-        from rag.knowledge_base import _embedding_function
         from rag.embeddings import HashingEmbeddingFunction
+        from rag.knowledge_base import _embedding_function
+
         orig_mock, orig_mode = cfg.MOCK_MODE, cfg.KB_EMBEDDING_MODE
         cfg.MOCK_MODE, cfg.KB_EMBEDDING_MODE = True, "auto"
         try:
@@ -78,8 +101,9 @@ class TestKnowledgeBaseEmbeddingSelection(unittest.TestCase):
 
     def test_explicit_hashing_mode_selected_even_outside_mock_mode(self):
         from config import cfg
-        from rag.knowledge_base import _embedding_function
         from rag.embeddings import HashingEmbeddingFunction
+        from rag.knowledge_base import _embedding_function
+
         orig_mock, orig_mode = cfg.MOCK_MODE, cfg.KB_EMBEDDING_MODE
         cfg.MOCK_MODE, cfg.KB_EMBEDDING_MODE = False, "hashing"
         try:
@@ -90,6 +114,7 @@ class TestKnowledgeBaseEmbeddingSelection(unittest.TestCase):
     def test_default_mode_outside_mock_mode_defers_to_chroma(self):
         from config import cfg
         from rag.knowledge_base import _embedding_function
+
         orig_mock, orig_mode = cfg.MOCK_MODE, cfg.KB_EMBEDDING_MODE
         cfg.MOCK_MODE, cfg.KB_EMBEDDING_MODE = False, "auto"
         try:
@@ -99,12 +124,16 @@ class TestKnowledgeBaseEmbeddingSelection(unittest.TestCase):
 
     def test_knowledge_base_works_fully_offline_under_mock_mode(self):
         from config import cfg
+
         orig_path = cfg.CHROMA_DB_PATH
         cfg.CHROMA_DB_PATH = self.tmp
         try:
             from rag.knowledge_base import KnowledgeBase
+
             kb = KnowledgeBase()
-            kb.add("playbooks", "brute force login playbook MFA check", {"source": "x"}, doc_id="p1")
+            kb.add(
+                "playbooks", "brute force login playbook MFA check", {"source": "x"}, doc_id="p1"
+            )
             results = kb.query("playbooks", "brute force login MFA")
             self.assertEqual(len(results), 1)
             self.assertEqual(results[0]["id"], "p1")
@@ -114,8 +143,9 @@ class TestKnowledgeBaseEmbeddingSelection(unittest.TestCase):
     def test_reopening_a_hashing_embedded_collection_in_a_new_instance_works(self):
         # Simulates a fresh process (e.g. main.py run twice) reopening data
         # created earlier - not just querying the same live Python object.
-        from rag.knowledge_base import KnowledgeBase
         from rag.embeddings import HashingEmbeddingFunction
+        from rag.knowledge_base import KnowledgeBase
+
         kb1 = KnowledgeBase(path=self.tmp, embedding_function=HashingEmbeddingFunction())
         kb1.add("playbooks", "brute force login playbook", {"source": "x"}, doc_id="p1")
 
@@ -129,8 +159,9 @@ class TestKnowledgeBaseEmbeddingSelection(unittest.TestCase):
         # than the one now requested must not raise - see KnowledgeBase's
         # embedding-conflict fallback.
         import chromadb
-        from rag.knowledge_base import KnowledgeBase
+
         from rag.embeddings import HashingEmbeddingFunction
+        from rag.knowledge_base import KnowledgeBase
 
         class OtherEF(chromadb.EmbeddingFunction):
             def __init__(self) -> None:

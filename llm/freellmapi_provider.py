@@ -23,6 +23,7 @@ successfully, pulled from the gateway's own /v1/models list). The fallback is
 gated by FREELLMAPI_FALLBACK_ENABLED, cached, and only fires *on failure* -
 the happy path performs identical request volume to before.
 """
+
 from __future__ import annotations
 
 import time
@@ -122,29 +123,49 @@ class FreeLLMAPIProvider(OpenAICompatProvider):
         model = self._model()
         try:
             resp = self._build_and_post(
-                system=system, messages=messages, tools=tools, max_tokens=max_tokens,
-                model=model, request_id=request_id,
+                system=system,
+                messages=messages,
+                tools=tools,
+                max_tokens=max_tokens,
+                model=model,
+                request_id=request_id,
             )
         except LLMRateLimitedError as primary:
             fallback_model = self._select_fallback_model()
             if not fallback_model:
                 raise
-            trace_llm(event="llm.fallback", request_id=request_id,
-                      from_model=model, to_model=fallback_model)
+            trace_llm(
+                event="llm.fallback",
+                request_id=request_id,
+                from_model=model,
+                to_model=fallback_model,
+            )
             try:
                 resp = self._build_and_post(
-                    system=system, messages=messages, tools=tools, max_tokens=max_tokens,
-                    model=fallback_model, request_id=f"{request_id}-fb",
+                    system=system,
+                    messages=messages,
+                    tools=tools,
+                    max_tokens=max_tokens,
+                    model=fallback_model,
+                    request_id=f"{request_id}-fb",
                 )
             except LLMRateLimitedError as fb:
                 self._remember_fallback_failure(fallback_model)
-                trace_llm(event="llm.fallback_failed", request_id=request_id,
-                          to_model=fallback_model, error=str(fb)[:120])
+                trace_llm(
+                    event="llm.fallback_failed",
+                    request_id=request_id,
+                    to_model=fallback_model,
+                    error=str(fb)[:120],
+                )
                 raise primary from fb
             except Exception as other:  # noqa: BLE001 - surface the primary 429
                 self._remember_fallback_failure(fallback_model)
-                trace_llm(event="llm.fallback_failed", request_id=request_id,
-                          to_model=fallback_model, error=str(other)[:120])
+                trace_llm(
+                    event="llm.fallback_failed",
+                    request_id=request_id,
+                    to_model=fallback_model,
+                    error=str(other)[:120],
+                )
                 raise primary from other
 
         routed = resp.headers.get("x-routed-via")
@@ -155,8 +176,12 @@ class FreeLLMAPIProvider(OpenAICompatProvider):
         out = self._parse_response(resp)
         out.request_id = request_id
         trace_llm(
-            event="llm.done", request_id=request_id, model=resp.json().get("model"),
-            status=resp.status_code, usage=out.usage or None, provider=routed,
+            event="llm.done",
+            request_id=request_id,
+            model=resp.json().get("model"),
+            status=resp.status_code,
+            usage=out.usage or None,
+            provider=routed,
         )
         return out
 
@@ -164,4 +189,5 @@ class FreeLLMAPIProvider(OpenAICompatProvider):
 def uuid_hex() -> str:
     """Tiny seam so tests can pin request ids if ever needed."""
     import uuid
+
     return uuid.uuid4().hex[:12]

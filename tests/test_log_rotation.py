@@ -3,7 +3,9 @@ Offline tests for log_rotation.py. No network, MOCK_MODE only.
 
 Run: python -m unittest tests.test_log_rotation -v
 """
+
 from __future__ import annotations
+
 import gzip
 import json
 import os
@@ -23,22 +25,26 @@ class TestNeedsRotation(unittest.TestCase):
 
     def tearDown(self):
         import shutil
+
         shutil.rmtree(self.tmp_dir, ignore_errors=True)
 
     def test_missing_file_does_not_need_rotation(self):
         import log_rotation
+
         r = log_rotation.needs_rotation(self.log_path)
         self.assertFalse(r["exists"])
         self.assertFalse(r["should_rotate"])
 
     def test_small_recent_file_does_not_need_rotation(self):
         import log_rotation
+
         self.log_path.write_text(json.dumps({"ts": time.strftime("%Y-%m-%dT%H:%M:%S")}) + "\n")
         r = log_rotation.needs_rotation(self.log_path, max_bytes=10_000_000, max_age_days=30)
         self.assertFalse(r["should_rotate"])
 
     def test_oversized_file_needs_rotation(self):
         import log_rotation
+
         self.log_path.write_text(json.dumps({"x": "y"}) + "\n")
         r = log_rotation.needs_rotation(self.log_path, max_bytes=5, max_age_days=9999)
         self.assertTrue(r["should_rotate"])
@@ -46,6 +52,7 @@ class TestNeedsRotation(unittest.TestCase):
 
     def test_old_entry_needs_rotation(self):
         import log_rotation
+
         old_ts = time.strftime("%Y-%m-%dT%H:%M:%S", time.gmtime(time.time() - 100 * 86400))
         self.log_path.write_text(json.dumps({"ts": old_ts}) + "\n")
         r = log_rotation.needs_rotation(self.log_path, max_bytes=10_000_000, max_age_days=30)
@@ -54,6 +61,7 @@ class TestNeedsRotation(unittest.TestCase):
 
     def test_malformed_first_line_falls_back_to_mtime(self):
         import log_rotation
+
         self.log_path.write_text("not json at all\n")
         r = log_rotation.needs_rotation(self.log_path, max_bytes=10_000_000, max_age_days=30)
         self.assertIsNotNone(r["age_days"])  # fell back to mtime, didn't crash
@@ -67,21 +75,25 @@ class TestRotateLog(unittest.TestCase):
 
     def tearDown(self):
         import shutil
+
         shutil.rmtree(self.tmp_dir, ignore_errors=True)
 
     def test_missing_file_is_a_noop(self):
         import log_rotation
+
         r = log_rotation.rotate_log(self.log_path)
         self.assertFalse(r["rotated"])
 
     def test_empty_file_is_a_noop(self):
         import log_rotation
+
         self.log_path.write_text("")
         r = log_rotation.rotate_log(self.log_path)
         self.assertFalse(r["rotated"])
 
     def test_rotates_and_compresses_content(self):
         import log_rotation
+
         entries = [{"alert_id": f"A{i}"} for i in range(5)]
         self.log_path.write_text("".join(json.dumps(e) + "\n" for e in entries))
 
@@ -102,6 +114,7 @@ class TestRotateLog(unittest.TestCase):
 
     def test_rotate_if_needed_only_rotates_when_over_threshold(self):
         import log_rotation
+
         self.log_path.write_text(json.dumps({"x": 1}) + "\n")
 
         r1 = log_rotation.rotate_if_needed(self.log_path, max_bytes=10_000_000, max_age_days=9999)
@@ -122,6 +135,7 @@ class TestPruneArchives(unittest.TestCase):
 
     def tearDown(self):
         import shutil
+
         shutil.rmtree(self.tmp_dir, ignore_errors=True)
 
     def _make_archive(self, name: str, age_days: float) -> Path:
@@ -134,10 +148,12 @@ class TestPruneArchives(unittest.TestCase):
 
     def test_missing_archive_dir_returns_empty(self):
         import log_rotation
+
         self.assertEqual(log_rotation.prune_archives(self.archive_dir / "nope", keep_days=30), [])
 
     def test_prunes_only_old_archives(self):
         import log_rotation
+
         old = self._make_archive("old.jsonl.gz", age_days=400)
         recent = self._make_archive("recent.jsonl.gz", age_days=1)
         deleted = log_rotation.prune_archives(self.archive_dir, keep_days=365)
@@ -147,6 +163,7 @@ class TestPruneArchives(unittest.TestCase):
 
     def test_keep_days_zero_prunes_everything(self):
         import log_rotation
+
         self._make_archive("a.jsonl.gz", age_days=1)
         self._make_archive("b.jsonl.gz", age_days=1)
         deleted = log_rotation.prune_archives(self.archive_dir, keep_days=0)
@@ -157,6 +174,7 @@ class TestRotateAll(unittest.TestCase):
     def test_rotate_all_uses_configured_paths(self):
         import log_rotation
         from config import cfg
+
         tmp_dir = tempfile.mkdtemp(prefix="rotation-test-")
         try:
             orig = {attr: getattr(cfg, attr) for attr in log_rotation.LOG_PATHS_TO_MANAGE}
@@ -173,6 +191,7 @@ class TestRotateAll(unittest.TestCase):
             for attr, val in orig.items():
                 setattr(cfg, attr, val)
             import shutil
+
             shutil.rmtree(tmp_dir, ignore_errors=True)
 
 

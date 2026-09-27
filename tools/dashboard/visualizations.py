@@ -2,21 +2,24 @@
 Saved-visualization tools for the Wazuh dashboard (OpenSearch Dashboards
 saved-objects API).
 """
+
 from __future__ import annotations
 
 import json
 from typing import Any
 
 from tools.base import BaseWazuhTool, Permission, ToolContext, ToolError
-from tools.dashboard.client import dashboards_request
-from tools.dashboard import osd_objects as osd
 from tools.dashboard import engine  # attribute access at call time (mockable)
+from tools.dashboard import osd_objects as osd
+from tools.dashboard.client import dashboards_request
 
 
 class GetWazuhVisualizations(BaseWazuhTool):
     name = "get_wazuh_visualizations"
-    description = ("List saved visualizations on the Wazuh dashboard (saved-objects API) - "
-                   "see what already exists before creating more.")
+    description = (
+        "List saved visualizations on the Wazuh dashboard (saved-objects API) - "
+        "see what already exists before creating more."
+    )
     input_schema = {
         "type": "object",
         "properties": {"limit": {"type": "integer", "description": "max results (default 20)"}},
@@ -29,26 +32,34 @@ class GetWazuhVisualizations(BaseWazuhTool):
         limit = min(int(p.get("limit", 20) or 20), 100)
         try:
             resp = dashboards_request(
-                "GET", "/api/saved_objects/_find",
+                "GET",
+                "/api/saved_objects/_find",
                 params={"type": "visualization", "per_page": limit},
             )
         except ToolError:
             raise
         items = resp.get("saved_objects") or resp.get("objects") or []
-        out = [{"id": i.get("id"), "title": (i.get("attributes") or {}).get("title")} for i in items]
+        out = [
+            {"id": i.get("id"), "title": (i.get("attributes") or {}).get("title")} for i in items
+        ]
         return {"count": len(out), "visualizations": out, "dashboard_ok": True}
 
 
 class CreateWazuhVisualization(BaseWazuhTool):
     name = "create_wazuh_visualization"
-    description = ("Create a saved visualization on the Wazuh dashboard from a validated "
-                   "visState (type + aggs + params JSON string built by the dashboard engineer). "
-                   "WRITE - proposes and requires human approval.")
+    description = (
+        "Create a saved visualization on the Wazuh dashboard from a validated "
+        "visState (type + aggs + params JSON string built by the dashboard engineer). "
+        "WRITE - proposes and requires human approval."
+    )
     input_schema = {
         "type": "object",
         "properties": {
             "title": {"type": "string"},
-            "vis_type": {"type": "string", "description": "metric | table | bar | line | area | pie"},
+            "vis_type": {
+                "type": "string",
+                "description": "metric | table | bar | line | area | pie",
+            },
             "vis_state": {"type": "string", "description": "full visState JSON string"},
             "reason": {"type": "string"},
         },
@@ -61,7 +72,7 @@ class CreateWazuhVisualization(BaseWazuhTool):
         try:
             state = json.loads(p["vis_state"])
         except json.JSONDecodeError as e:
-            raise ToolError(f"vis_state is not valid JSON: {e}")
+            raise ToolError(f"vis_state is not valid JSON: {e}") from e
         if not isinstance(state, dict) or not isinstance(state.get("aggs"), list):
             raise ToolError("vis_state must be an object with an 'aggs' list.")
         # Normalize the type from the state itself (an old engine emitting
@@ -70,13 +81,15 @@ class CreateWazuhVisualization(BaseWazuhTool):
         try:
             vis_type = osd.normalize_vis_type(vis_type)
         except ValueError as e:
-            raise ToolError(str(e))
+            raise ToolError(str(e)) from e
 
         # Resolve + verify the index pattern BEFORE anything is written: a
         # visualization bound to a missing pattern renders as a dead panel.
         osd_id = engine._find_index_pattern()
         if not osd_id:
-            raise ToolError("Could not locate an index pattern on the dashboard - create one first.")
+            raise ToolError(
+                "Could not locate an index pattern on the dashboard - create one first."
+            )
         try:
             resp = engine.dashboards_request("GET", f"/api/saved_objects/index-pattern/{osd_id}")
         except ToolError:
@@ -84,36 +97,53 @@ class CreateWazuhVisualization(BaseWazuhTool):
         if resp is None or (resp.get("statusCode") or resp.get("status_code") or 200) >= 400:
             raise ToolError(
                 f"Could not locate that index-pattern ('{osd_id}') - create it first "
-                "and point the visualization at it.")
+                "and point the visualization at it."
+            )
 
         # Build the REAL saved object: complete visState (registered type with
         # full params) + a searchSourceJSON that binds the index pattern by
         # reference (indexRefName + a references entry), not a raw index id.
         title = p["title"]
         attrs, refs = osd.build_visualization_attributes(
-            title, vis_type, state.get("aggs", []), osd_id,
-            description="Generated by the AI SOC engineer (approved)")
+            title,
+            vis_type,
+            state.get("aggs", []),
+            osd_id,
+            description="Generated by the AI SOC engineer (approved)",
+        )
 
         proposed = {
             "action": "create_wazuh_visualization",
             "reason": p.get("reason", ""),
-            "payload": {"title": p["title"], "vis_type": vis_type,
-                        "vis_state": p["vis_state"], "index_pattern": osd_id,
-                        "reason": p.get("reason", "")},
+            "payload": {
+                "title": p["title"],
+                "vis_type": vis_type,
+                "vis_state": p["vis_state"],
+                "index_pattern": osd_id,
+                "reason": p.get("reason", ""),
+            },
             "permission": self.permission.value,
         }
         proposed["generated_config"] = attrs["visState"]
-        proposed["validation"] = {"valid": True, "note": "visState uses a registered type and a "
-                                                          "resolved index pattern."}
+        proposed["validation"] = {
+            "valid": True,
+            "note": "visState uses a registered type and a resolved index pattern.",
+        }
         ctx.approve_or_raise(proposed)
         try:
             resp = dashboards_request(
-                "POST", "/api/saved_objects/visualization",
+                "POST",
+                "/api/saved_objects/visualization",
                 body={"attributes": attrs, "references": refs},
             )
         except ToolError:
             raise
         resp_obj = resp.get("saved_object") or resp.get("object") or {}
         obj_id = resp_obj.get("id") or resp.get("id")
-        return {"status": "executed", "visualization_id": obj_id, "title": p["title"],
-                "index_pattern": osd_id, "detail": resp.get("message")}
+        return {
+            "status": "executed",
+            "visualization_id": obj_id,
+            "title": p["title"],
+            "index_pattern": osd_id,
+            "detail": resp.get("message"),
+        }

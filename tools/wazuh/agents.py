@@ -1,6 +1,7 @@
 """
 Wazuh agents + manager/cluster status tools.
 """
+
 from __future__ import annotations
 
 from typing import Any
@@ -29,7 +30,10 @@ class GetWazuhAgents(BaseWazuhTool):
     input_schema = {
         "type": "object",
         "properties": {
-            "status": {"type": "string", "description": "active | disconnected | never_connected | pending"},
+            "status": {
+                "type": "string",
+                "description": "active | disconnected | never_connected | pending",
+            },
             "group": {"type": "string"},
             "platform": {"type": "string"},
             "search": {"type": "string"},
@@ -43,15 +47,22 @@ class GetWazuhAgents(BaseWazuhTool):
         p = self.validate(params)
         limit = min(int(p.get("limit", 50) or 50), 500)
         try:
-            resp = ctx.wazuh.get_agents(limit=limit, status=p.get("status"),
-                                        group=p.get("group"), platform=p.get("platform"),
-                                        search=p.get("search"))
+            resp = ctx.wazuh.get_agents(
+                limit=limit,
+                status=p.get("status"),
+                group=p.get("group"),
+                platform=p.get("platform"),
+                search=p.get("search"),
+            )
         except Exception as e:  # noqa: BLE001
             raise ToolError(f"Failed to fetch agents: {e}") from e
         data = resp.get("data", {})
         agents = [_agent_summary(a) for a in data.get("affected_items", [])]
-        return {"count": len(agents), "total": data.get("total_affected_items", len(agents)),
-                "agents": agents}
+        return {
+            "count": len(agents),
+            "total": data.get("total_affected_items", len(agents)),
+            "agents": agents,
+        }
 
 
 class GetWazuhAgent(BaseWazuhTool):
@@ -93,8 +104,12 @@ class GetWazuhManagerStatus(BaseWazuhTool):
         status = items[0] if items else {}
         running = [k for k, v in status.items() if v == "running"]
         stopped = [k for k, v in status.items() if v == "stopped"]
-        return {"manager": ctx.wazuh.base_url, "daemons": status,
-                "running": running, "stopped": stopped}
+        return {
+            "manager": ctx.wazuh.base_url,
+            "daemons": status,
+            "running": running,
+            "stopped": stopped,
+        }
 
 
 class GetWazuhClusterStatus(BaseWazuhTool):
@@ -114,8 +129,10 @@ class GetWazuhClusterStatus(BaseWazuhTool):
 
 class RestartWazuhManager(BaseWazuhTool):
     name = "restart_wazuh_manager"
-    description = ("Restart the Wazuh manager. HIGH RISK (EXECUTE): requires approval AND "
-                   "explicit confirmation. Brief manager outage while it restarts.")
+    description = (
+        "Restart the Wazuh manager. HIGH RISK (EXECUTE): requires approval AND "
+        "explicit confirmation. Brief manager outage while it restarts."
+    )
     input_schema = {
         "type": "object",
         "properties": {"reason": {"type": "string"}},
@@ -139,8 +156,10 @@ class RestartWazuhManager(BaseWazuhTool):
 
 class DisableWazuhAgent(BaseWazuhTool):
     name = "disable_wazuh_agent"
-    description = ("Remove an agent from the Wazuh manager (the only API-supported 'disable'). "
-                   "HIGH RISK (EXECUTE): requires approval AND explicit confirmation.")
+    description = (
+        "Remove an agent from the Wazuh manager (the only API-supported 'disable'). "
+        "HIGH RISK (EXECUTE): requires approval AND explicit confirmation."
+    )
     input_schema = {
         "type": "object",
         "properties": {

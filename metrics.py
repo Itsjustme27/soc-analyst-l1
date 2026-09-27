@@ -13,6 +13,7 @@ run.py writes "ts" and "provider"; only main.py/dashboard.py write
 "siem_provider" and "rule_matches" in every entry) - see the per-writer
 comments below.
 """
+
 from __future__ import annotations
 
 import json
@@ -29,11 +30,17 @@ CONFIDENCE_BUCKETS: list[tuple[float, float]] = [(0.0, 0.5), (0.5, 0.7), (0.7, 0
 
 
 def _triage_log_path(path: str | Path | None = None) -> Path:
-    return Path(path) if path else Path(getattr(cfg, "TRIAGE_LOG_PATH", "") or "data/triage_log.jsonl")
+    return (
+        Path(path) if path else Path(getattr(cfg, "TRIAGE_LOG_PATH", "") or "data/triage_log.jsonl")
+    )
 
 
 def _feedback_log_path(path: str | Path | None = None) -> Path:
-    return Path(path) if path else Path(getattr(cfg, "FEEDBACK_LOG_PATH", "") or "data/feedback_log.jsonl")
+    return (
+        Path(path)
+        if path
+        else Path(getattr(cfg, "FEEDBACK_LOG_PATH", "") or "data/feedback_log.jsonl")
+    )
 
 
 def _read_jsonl(path: Path) -> list[dict[str, Any]]:
@@ -111,7 +118,9 @@ def compute_metrics(
     confidence_hist: Counter = Counter()
     needs_review_count = 0
     provider_stats: dict[str, dict[str, int]] = defaultdict(lambda: {"count": 0, "needs_review": 0})
-    rule_stats: dict[str, dict[str, int]] = defaultdict(lambda: {"triggered": 0, "true_positive": 0})
+    rule_stats: dict[str, dict[str, int]] = defaultdict(
+        lambda: {"triggered": 0, "true_positive": 0}
+    )
 
     for e in entries:
         result = e.get("result") or {}
@@ -131,7 +140,7 @@ def compute_metrics(
         if needs_review:
             provider_stats[provider]["needs_review"] += 1
 
-        for m in (e.get("rule_matches") or []):
+        for m in e.get("rule_matches") or []:
             if not m.get("triggered"):
                 continue
             name = m.get("name") or m.get("rule_id") or "unknown"
@@ -154,7 +163,10 @@ def compute_metrics(
             "agreed": agreed,
             "agreement_rate": agreed / len(feedback),
             "by_analyst": {
-                name: {**s, "agreement_rate": (s["agreed"] / s["reviewed"]) if s["reviewed"] else 0.0}
+                name: {
+                    **s,
+                    "agreement_rate": (s["agreed"] / s["reviewed"]) if s["reviewed"] else 0.0,
+                }
                 for name, s in sorted(by_analyst.items())
             },
         }
@@ -169,7 +181,12 @@ def compute_metrics(
             for lo, hi in CONFIDENCE_BUCKETS
         },
         "by_provider": {
-            name: {**stats, "needs_review_rate": (stats["needs_review"] / stats["count"]) if stats["count"] else 0.0}
+            name: {
+                **stats,
+                "needs_review_rate": (stats["needs_review"] / stats["count"])
+                if stats["count"]
+                else 0.0,
+            }
             for name, stats in sorted(provider_stats.items())
         },
         "top_rules": sorted(
@@ -178,7 +195,9 @@ def compute_metrics(
                     "name": name,
                     "triggered": s["triggered"],
                     "true_positive": s["true_positive"],
-                    "true_positive_rate": (s["true_positive"] / s["triggered"]) if s["triggered"] else 0.0,
+                    "true_positive_rate": (s["true_positive"] / s["triggered"])
+                    if s["triggered"]
+                    else 0.0,
                 }
                 for name, s in rule_stats.items()
             ),

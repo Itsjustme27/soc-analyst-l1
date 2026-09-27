@@ -1,4 +1,5 @@
 """Anthropic Claude provider (the original default)."""
+
 from __future__ import annotations
 
 from typing import Any
@@ -51,7 +52,12 @@ class AnthropicProvider(LLMProvider):
                     blocks.append({"type": "text", "text": m["content"]})
                 for tc in m.get("tool_calls") or []:
                     blocks.append(
-                        {"type": "tool_use", "id": tc["id"], "name": tc["name"], "input": tc["input"]}
+                        {
+                            "type": "tool_use",
+                            "id": tc["id"],
+                            "name": tc["name"],
+                            "input": tc["input"],
+                        }
                     )
                 out.append({"role": "assistant", "content": blocks})
             elif role == "tool":

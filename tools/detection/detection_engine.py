@@ -27,6 +27,7 @@ bounded by LOGTEST_MAX_ATTEMPTS per round *at the agent level*, and the final
 pass/fail arbitrage happens in verify_rule_deployment after deployment. The
 engine never claims a rule works until that verification confirms it.
 """
+
 from __future__ import annotations
 
 import re
@@ -40,8 +41,8 @@ from tools.wazuh.local_rules import (
     merge_rule,
     unified_diff,
 )
-from tools.wazuh.validation import validate_wazuh_rule_xml
 from tools.wazuh.logtest import _parse_logtest
+from tools.wazuh.validation import validate_wazuh_rule_xml
 
 _SAMPLE_LIMIT = 8
 _TERMS_FOR_OVERLAP = 4
@@ -73,29 +74,34 @@ def _baseline_for(ctx: ToolContext, sample: str, log_format: str) -> dict[str, A
     }
 
 
-def _baseline_in_session(ctx: ToolContext, sample: str, log_format: str,
-                         token: str | None) -> tuple[dict[str, Any], str | None]:
+def _baseline_in_session(
+    ctx: ToolContext, sample: str, log_format: str, token: str | None
+) -> tuple[dict[str, Any], str | None]:
     """Logtest one sample reusing an open logtest session (token) so
     frequency/divide counters accumulate across samples. The session is NOT
     closed here - the caller owns it. Returns (row, next_token)."""
     try:
-        data = (ctx.wazuh.run_logtest(sample, log_format=log_format, token=token) or {}).get("data") or {}
+        data = (ctx.wazuh.run_logtest(sample, log_format=log_format, token=token) or {}).get(
+            "data"
+        ) or {}
         info = _parse_logtest(data)
         error = None
     except Exception as e:  # noqa: BLE001 - surface cleanly
         info, error = {}, str(e)[:200]
     next_token = data.get("token") if not error else token
-    return ({
-        "sample": sample[:200],
-        "status": "matched" if (error is None and info.get("matched")) else "no_alert",
-        "rule_id": info.get("rule_id"),
-        "rule_level": info.get("rule_level"),
-        "rule_description": info.get("rule_description"),
-        "decoder_name": (info.get("decoder") or {}).get("name"),
-        "messages": (info.get("messages") or [])[:3],
-        "location": info.get("location"),
-        **({"error": error} if error else {}),
-    }), next_token
+    return (
+        {
+            "sample": sample[:200],
+            "status": "matched" if (error is None and info.get("matched")) else "no_alert",
+            "rule_id": info.get("rule_id"),
+            "rule_level": info.get("rule_level"),
+            "rule_description": info.get("rule_description"),
+            "decoder_name": (info.get("decoder") or {}).get("name"),
+            "messages": (info.get("messages") or [])[:3],
+            "location": info.get("location"),
+            **({"error": error} if error else {}),
+        }
+    ), next_token
 
 
 def _rule_uses_frequency(ctx: ToolContext, rule_id: int) -> bool:
@@ -106,13 +112,13 @@ def _rule_uses_frequency(ctx: ToolContext, rule_id: int) -> bool:
         content = ctx.wazuh.get_rules_file("local_rules.xml", raw=True) or ""
     except Exception:  # noqa: BLE001 - treat as plain rule, verification still runs
         return False
-    m = re.search(r"<rule\b(?=[^>]*\bid=\"%d\")(?:[^>]*)>.*?</rule>" % int(rule_id),
-                  content, re.S)
+    m = re.search(f'<rule\\b(?=[^>]*\\bid="{int(rule_id)}")(?:[^>]*)>.*?</rule>', content, re.S)
     return bool(m and re.search(r"\b(?:frequency|divide)=\"[0-9]+\"", m.group(0)))
 
 
-def _classify_baseline(candidate_rule_id: int | None, row: dict[str, Any],
-                       expect_positive: bool) -> str:
+def _classify_baseline(
+    candidate_rule_id: int | None, row: dict[str, Any], expect_positive: bool
+) -> str:
     """Map a baseline logtest row to a 5-state label relative to the
     candidate rule."""
     if row.get("status") == "logtest_error":
@@ -120,17 +126,18 @@ def _classify_baseline(candidate_rule_id: int | None, row: dict[str, Any],
     if row.get("status") == "no_alert":
         if expect_positive:
             return "no_decode"  # log decoded to nothing - cannot match yet
-        return "clean"          # negative sample fires nothing - good baseline
+        return "clean"  # negative sample fires nothing - good baseline
     rid = row.get("rule_id")
     if str(rid) == str(candidate_rule_id):
         return "already_covered"  # the rule already exists and fires
-    return "fires_other"          # some other rule fires - overlap/shadow risk
+    return "fires_other"  # some other rule fires - overlap/shadow risk
 
 
 def _run_overlap_search(ctx: ToolContext, xml_text: str, rid: int) -> list[dict[str, Any]]:
     """Find existing rules likely to overlap the candidate (same match terms
     or same description keywords) - the FP/noise analysis."""
     import re
+
     terms = re.findall(r"<(?:match|regex)>([^<]{3,40})</(?:match|regex)>", xml_text)
     seen: dict[str, dict[str, Any]] = {}
     try:
@@ -141,9 +148,10 @@ def _run_overlap_search(ctx: ToolContext, xml_text: str, rid: int) -> list[dict[
     for item in items:
         if item.get("id") == rid:
             continue
-        details = (item.get("details") or {})
-        blob = " ".join(str(v) for v in (
-            details.get("match"), details.get("regex"), item.get("description")))
+        details = item.get("details") or {}
+        blob = " ".join(
+            str(v) for v in (details.get("match"), details.get("regex"), item.get("description"))
+        )
         overlap = [t for t in terms if t.lower() in blob.lower()]
         if overlap:
             seen[str(item.get("id"))] = {
@@ -158,23 +166,40 @@ def _run_overlap_search(ctx: ToolContext, xml_text: str, rid: int) -> list[dict[
 # --------------------------------------------------------------------------- #
 class DevelopWazuhRule(BaseWazuhTool):
     name = "develop_wazuh_rule"
-    description = ("Detection engineering workflow: given a candidate <rule> XML and sample logs, "
-                   "statically validate it, check the parent (if_sid) and overlapping existing rules, "
-                   "logtest the samples against the current ruleset as baseline evidence, and produce "
-                   "a human-approvable proposal to add it to local_rules.xml. Requires approval to "
-                   "execute; a manager restart (own approval) loads it; then verify_rule_deployment "
-                   "proves it fires on positives and not on negatives. Call this instead of "
-                   "create_wazuh_rule when you have representative log samples.")
+    description = (
+        "Detection engineering workflow: given a candidate <rule> XML and sample logs, "
+        "statically validate it, check the parent (if_sid) and overlapping existing rules, "
+        "logtest the samples against the current ruleset as baseline evidence, and produce "
+        "a human-approvable proposal to add it to local_rules.xml. Requires approval to "
+        "execute; a manager restart (own approval) loads it; then verify_rule_deployment "
+        "proves it fires on positives and not on negatives. Call this instead of "
+        "create_wazuh_rule when you have representative log samples."
+    )
     input_schema = {
         "type": "object",
         "properties": {
-            "rule_xml": {"type": "string", "description": "full <rule>...</rule> XML (id >= 100000)"},
-            "positive_samples": {"type": "array", "items": {"type": "string"},
-                                 "description": "log lines that MUST fire this rule"},
-            "negative_samples": {"type": "array", "items": {"type": "string"},
-                                 "description": "log lines that must NOT fire this rule"},
-            "log_format": {"type": "string", "description": "logtest format: syslog, json, eventlog, ..."},
-            "reason": {"type": "string", "description": "why this detection is needed (shown to the approver)"},
+            "rule_xml": {
+                "type": "string",
+                "description": "full <rule>...</rule> XML (id >= 100000)",
+            },
+            "positive_samples": {
+                "type": "array",
+                "items": {"type": "string"},
+                "description": "log lines that MUST fire this rule",
+            },
+            "negative_samples": {
+                "type": "array",
+                "items": {"type": "string"},
+                "description": "log lines that must NOT fire this rule",
+            },
+            "log_format": {
+                "type": "string",
+                "description": "logtest format: syslog, json, eventlog, ...",
+            },
+            "reason": {
+                "type": "string",
+                "description": "why this detection is needed (shown to the approver)",
+            },
         },
         "required": ["rule_xml", "positive_samples", "reason"],
     }
@@ -187,12 +212,16 @@ class DevelopWazuhRule(BaseWazuhTool):
         negatives = [str(s)[:2000] for s in (p.get("negative_samples") or [])[:_SAMPLE_LIMIT]]
         log_format = p.get("log_format") or "syslog"
         if not positives:
-            raise ToolError("At least one positive sample log is required (a log the rule must detect).")
+            raise ToolError(
+                "At least one positive sample log is required (a log the rule must detect)."
+            )
 
         # 1) static validation - no manager round trip on typos
         validation = validate_wazuh_rule_xml(xml)
         if not validation["valid"]:
-            raise ToolError("Rule failed static validation:\n- " + "\n- ".join(validation["errors"]))
+            raise ToolError(
+                "Rule failed static validation:\n- " + "\n- ".join(validation["errors"])
+            )
         rid = validation["rule_id"]
 
         evidence: dict[str, Any] = {"static": validation, "sample_groups": {}}
@@ -204,9 +233,13 @@ class DevelopWazuhRule(BaseWazuhTool):
             if _rule_exists(ctx, parent):
                 checks.append(f"parent rule {parent} exists")
             else:
-                checks.append(f"WARNING: if_sid references rule {parent}, which is NOT in the ruleset - the rule will never fire")
+                checks.append(
+                    f"WARNING: if_sid references rule {parent}, which is NOT in the ruleset - the rule will never fire"
+                )
         if _rule_exists(ctx, rid):
-            raise ToolError(f"Rule id {rid} already exists in the manager ruleset - use update_wazuh_rule or pick a new id.")
+            raise ToolError(
+                f"Rule id {rid} already exists in the manager ruleset - use update_wazuh_rule or pick a new id."
+            )
         checks.append(f"candidate id {rid} is free")
         evidence["manager_checks"] = checks
         evidence["max_attempts"] = int(getattr(cfg, "LOGTEST_MAX_ATTEMPTS", 3))
@@ -214,8 +247,10 @@ class DevelopWazuhRule(BaseWazuhTool):
         # 3) overlap / FP analysis
         overlaps = _run_overlap_search(ctx, xml, rid)
         evidence["overlap"] = {
-            "note": ("existing rules sharing match terms - high overlap suggests the candidate "
-                     "may be redundant or generate duplicate alerts"),
+            "note": (
+                "existing rules sharing match terms - high overlap suggests the candidate "
+                "may be redundant or generate duplicate alerts"
+            ),
             "rules": overlaps,
         }
 
@@ -232,19 +267,24 @@ class DevelopWazuhRule(BaseWazuhTool):
         if covered:
             evidence["baseline_summary"] = (
                 "The candidate rule (or another rule with this id) ALREADY fires on the positive "
-                "samples - confirm this rule is really needed.")
+                "samples - confirm this rule is really needed."
+            )
         elif no_decode and len(no_decode) == len(pos_details):
             evidence["baseline_summary"] = (
                 "None of the positive samples decode to an alert under the current ruleset. They may "
-                "need a custom decoder first, or the log format/location may be wrong for logtest.")
+                "need a custom decoder first, or the log format/location may be wrong for logtest."
+            )
         elif fires_other:
             evidence["baseline_summary"] = (
                 "Positive samples currently trigger different rule(s) - the candidate will add "
-                "detection on top of them. Review the overlap list above for duplication.")
+                "detection on top of them. Review the overlap list above for duplication."
+            )
         else:
-            evidence["baseline_summary"] = ("Positive samples are currently undetected ('no alert' or "
-                                            "generic decode) and negative samples are clean - the candidate "
-                                            "adds real coverage.")
+            evidence["baseline_summary"] = (
+                "Positive samples are currently undetected ('no alert' or "
+                "generic decode) and negative samples are clean - the candidate "
+                "adds real coverage."
+            )
 
         # 5) build + gate the proposal
         current = fetch_local_file(ctx, LOCAL_RULES_FILE)
@@ -258,8 +298,7 @@ class DevelopWazuhRule(BaseWazuhTool):
             "reason": p.get("reason", ""),
             # The executed action re-merges the candidate rule into the CURRENT
             # file at execution time (deterministic, never a stale snapshot).
-            "payload": {"rule_xml": xml, "overwrite": False,
-                        "reason": p.get("reason", "")},
+            "payload": {"rule_xml": xml, "overwrite": False, "reason": p.get("reason", "")},
             "permission": self.permission.value,
         }
         proposed["generated_config"] = new_content
@@ -288,10 +327,12 @@ class DevelopWazuhRule(BaseWazuhTool):
 
 class VerifyRuleDeployment(BaseWazuhTool):
     name = "verify_rule_deployment"
-    description = ("READ-ONLY post-deploy verification: after a rule was deployed and the manager "
-                   "restarted, logtest the positive/negative samples and prove the rule id fires on "
-                   "positives and stays silent on negatives. Reports pass/fail per sample - never "
-                   "assume; the manager's answer is the truth.")
+    description = (
+        "READ-ONLY post-deploy verification: after a rule was deployed and the manager "
+        "restarted, logtest the positive/negative samples and prove the rule id fires on "
+        "positives and stays silent on negatives. Reports pass/fail per sample - never "
+        "assume; the manager's answer is the truth."
+    )
     input_schema = {
         "type": "object",
         "properties": {
@@ -320,18 +361,23 @@ class VerifyRuleDeployment(BaseWazuhTool):
         if freq:
             for sample in positives:
                 row, token = _baseline_in_session(ctx, sample, log_format, token)
-                results.append({
-                    "expected": "positive",
-                    "pass": str(row.get("rule_id")) == str(rid),
-                    "fired_rule": row.get("rule_id"),
-                    "fired_description": row.get("rule_description"),
-                    "decoder": row.get("decoder_name"),
-                    "status": row.get("status"),
-                    "sample": str(sample)[:160],
-                    **({"error": row["error"]} if row.get("error") else {}),
-                })
-            fired_pos = [i + 1 for i, r in enumerate(results)
-                         if r["expected"] == "positive" and str(r.get("fired_rule")) == str(rid)]
+                results.append(
+                    {
+                        "expected": "positive",
+                        "pass": str(row.get("rule_id")) == str(rid),
+                        "fired_rule": row.get("rule_id"),
+                        "fired_description": row.get("rule_description"),
+                        "decoder": row.get("decoder_name"),
+                        "status": row.get("status"),
+                        "sample": str(sample)[:160],
+                        **({"error": row["error"]} if row.get("error") else {}),
+                    }
+                )
+            fired_pos = [
+                i + 1
+                for i, r in enumerate(results)
+                if r["expected"] == "positive" and str(r.get("fired_rule")) == str(rid)
+            ]
             session_note = (
                 f"frequency/divide rule: positives were pushed through a single logtest "
                 f"session (threshold accumulation). Fired on sample(s): {fired_pos}. "
@@ -339,8 +385,8 @@ class VerifyRuleDeployment(BaseWazuhTool):
                 "a non-firing frequency rule here is expected and is NOT evidence of "
                 "a broken rule - treat the positive arm as inconclusive and verify "
                 "through analysisd."
-                if fired_pos else
-                "frequency/divide rule: the rule did not trip inside logtest. This is "
+                if fired_pos
+                else "frequency/divide rule: the rule did not trip inside logtest. This is "
                 "the expected result on this build - logtest holds no frequency state, "
                 "so it cannot confirm or refute a correlation rule. Do not conclude "
                 "the rule is broken; verify through analysisd instead."
@@ -348,16 +394,18 @@ class VerifyRuleDeployment(BaseWazuhTool):
         else:
             for sample in positives:
                 row = _baseline_for(ctx, sample, log_format)
-                results.append({
-                    "expected": "positive",
-                    "pass": str(row.get("rule_id")) == str(rid),
-                    "fired_rule": row.get("rule_id"),
-                    "fired_description": row.get("rule_description"),
-                    "decoder": row.get("decoder_name"),
-                    "status": row.get("status"),
-                    "sample": str(sample)[:160],
-                    **({"error": row["error"]} if row.get("error") else {}),
-                })
+                results.append(
+                    {
+                        "expected": "positive",
+                        "pass": str(row.get("rule_id")) == str(rid),
+                        "fired_rule": row.get("rule_id"),
+                        "fired_description": row.get("rule_description"),
+                        "decoder": row.get("decoder_name"),
+                        "status": row.get("status"),
+                        "sample": str(sample)[:160],
+                        **({"error": row["error"]} if row.get("error") else {}),
+                    }
+                )
         if token:
             try:
                 ctx.wazuh.end_logtest_session(token)
@@ -365,25 +413,32 @@ class VerifyRuleDeployment(BaseWazuhTool):
                 pass
         for sample in negatives:
             row = _baseline_for(ctx, sample, log_format)
-            results.append({
-                "expected": "negative",
-                "pass": str(row.get("rule_id")) != str(rid),
-                "fired_rule": row.get("rule_id"),
-                "fired_description": row.get("rule_description"),
-                "decoder": row.get("decoder_name"),
-                "status": row.get("status"),
-                "sample": str(sample)[:160],
-                **({"error": row["error"]} if row.get("error") else {}),
-            })
+            results.append(
+                {
+                    "expected": "negative",
+                    "pass": str(row.get("rule_id")) != str(rid),
+                    "fired_rule": row.get("rule_id"),
+                    "fired_description": row.get("rule_description"),
+                    "decoder": row.get("decoder_name"),
+                    "status": row.get("status"),
+                    "sample": str(sample)[:160],
+                    **({"error": row["error"]} if row.get("error") else {}),
+                }
+            )
         pos_pass = sum(1 for r in results if r["expected"] == "positive" and r["pass"])
         neg_pass = sum(1 for r in results if r["expected"] == "negative" and r["pass"])
         pos_total = sum(1 for r in results if r["expected"] == "positive")
         neg_total = sum(1 for r in results if r["expected"] == "negative")
         clean = not any(r.get("error") for r in results)
-        pos_fired = any(str(r.get("fired_rule")) == str(rid)
-                        for r in results if r["expected"] == "positive")
-        verified = pos_total > 0 and neg_pass == neg_total and clean and (
-            (not freq and pos_pass == pos_total) or (freq and pos_fired))
+        pos_fired = any(
+            str(r.get("fired_rule")) == str(rid) for r in results if r["expected"] == "positive"
+        )
+        verified = (
+            pos_total > 0
+            and neg_pass == neg_total
+            and clean
+            and ((not freq and pos_pass == pos_total) or (freq and pos_fired))
+        )
         # logtest is a per-event decoder+rule tester: it holds no frequency/
         # timeframe counter, so a correlation rule can never be CONFIRMED (or
         # refuted) through it. Measured on a live 4.x manager: 8 repeated
@@ -391,8 +446,7 @@ class VerifyRuleDeployment(BaseWazuhTool):
         # while the live pipeline would have. Reporting verified=False there
         # is a false negative - it reads as "this rule is broken" and invites
         # deleting a working rule, so say inconclusive and mean it.
-        verification = ("inconclusive" if freq else
-                        ("confirmed" if verified else "failed"))
+        verification = "inconclusive" if freq else ("confirmed" if verified else "failed")
         return {
             "rule_id": rid,
             "frequency_rule": freq,
@@ -407,16 +461,21 @@ class VerifyRuleDeployment(BaseWazuhTool):
                 "the alert stream, or confirm the rule is loaded and enabled via "
                 "GET /rules/<id> and trust the live engine. The parent rules and "
                 "the negatives below are still verified by logtest."
-            ) if freq else None,
+            )
+            if freq
+            else None,
             "samples": results,
-            "note": ("verified=True means the manager confirmed the rule fires on all "
-                     "positives and no negatives. " + session_note).strip(),
+            "note": (
+                "verified=True means the manager confirmed the rule fires on all "
+                "positives and no negatives. " + session_note
+            ).strip(),
         }
 
 
 # --------------------------------------------------------------------------- #
-def _run_baseline(ctx: ToolContext, rid: int, samples: list[str],
-                  log_format: str, expect_positive: bool) -> list[dict[str, Any]]:
+def _run_baseline(
+    ctx: ToolContext, rid: int, samples: list[str], log_format: str, expect_positive: bool
+) -> list[dict[str, Any]]:
     """Logtest samples against the deployed ruleset; annotate each with the
     5-state classification relative to the candidate."""
     out: list[dict[str, Any]] = []
@@ -425,12 +484,14 @@ def _run_baseline(ctx: ToolContext, rid: int, samples: list[str],
         cls = _classify_baseline(rid, base, expect_positive)
         row = {"index": i, "class": cls, "sample": s[:200]}
         if base.get("rule_id") is not None:
-            row.update({
-                "rule_id": base.get("rule_id"),
-                "rule_description": base.get("rule_description"),
-                "rule_level": base.get("rule_level"),
-                "decoder": base.get("decoder_name"),
-            })
+            row.update(
+                {
+                    "rule_id": base.get("rule_id"),
+                    "rule_description": base.get("rule_description"),
+                    "rule_level": base.get("rule_level"),
+                    "decoder": base.get("decoder_name"),
+                }
+            )
         if base.get("error"):
             row["error"] = base["error"]
         out.append(row)
@@ -439,6 +500,7 @@ def _run_baseline(ctx: ToolContext, rid: int, samples: list[str],
 
 def _find_if_sid(xml_text: str) -> int | None:
     import re
+
     m = re.search(r"<if_sid>(\d+)</if_sid>", xml_text)
     return int(m.group(1)) if m else None
 
@@ -455,7 +517,7 @@ def _rule_exists(ctx: ToolContext, rule_id: int) -> bool:
 
 
 def zip_neg(neg: list[str], classes: list[str]):
-    return list(zip(neg, classes))
+    return list(zip(neg, classes, strict=True))
 
 
 TOOLS = [DevelopWazuhRule, VerifyRuleDeployment]

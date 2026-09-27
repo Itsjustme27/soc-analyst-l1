@@ -12,6 +12,7 @@ are logged with their error so triage of the *agent* is possible. Writers
 never rotate this file - log_rotation.py handles that for the other JSONL
 logs; add AUDIT_LOG_PATH to the rotation list if it grows.
 """
+
 from __future__ import annotations
 
 import json
@@ -50,8 +51,10 @@ def redact_secrets(value: Any) -> Any:
     """Recursively mask secrets in params/results before they hit the audit
     trail. Never mutates the input: returns a new structure."""
     if isinstance(value, dict):
-        return {k: (REDACTED if _SECRET_KEY_RE.search(k) else redact_secrets(v))
-                for k, v in value.items()}
+        return {
+            k: (REDACTED if _SECRET_KEY_RE.search(k) else redact_secrets(v))
+            for k, v in value.items()
+        }
     if isinstance(value, list):
         return [redact_secrets(v) for v in value]
     if isinstance(value, str):

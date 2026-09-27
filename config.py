@@ -2,7 +2,9 @@
 Central configuration, loaded from environment / .env file.
 Nothing here talks to the network - just settings.
 """
+
 import os
+
 from dotenv import load_dotenv
 
 load_dotenv()
