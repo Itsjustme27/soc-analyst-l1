@@ -10,6 +10,7 @@ Endpoints used:
 Auth: QRadar API token in the ``SEC`` header.
 """
 from __future__ import annotations
+import re
 import time
 import requests
 from typing import Any
@@ -20,6 +21,25 @@ from connectors.siem.base import SIEMConnector, resolve_cfg, resolve_bool_cfg
 # Default: every event in the last hour. Users should point QRADAR_SEARCH at a
 # query that surfaces *alerts* (e.g. QRadar offense/rule events + custom rules).
 DEFAULT_SEARCH = "SELECT * FROM events LAST 1 HOUR"
+
+# Conservative allowlist for values interpolated into Ariel query strings.
+_ARIEL_SAFE = re.compile(r"^[A-Za-z0-9@._:\-/\s\[\]()%=\+]+$")
+
+
+def _ariel_literal(value: str) -> str:
+    """A literal for safe interpolation into an Ariel WHERE clause (B608).
+
+    Fail-closed: quotes, comment markers and semicolons are refused outright
+    and only a conservative character set is allowed, so alert-derived
+    host/user values can never break out of the filter band."""
+    v = str(value or "").strip()
+    if not v:
+        return v
+    if "'" in v or '"' in v or "--" in v or ";" in v:
+        raise ValueError("refusing QRadar filter with quote/comment metacharacters")
+    if not _ARIEL_SAFE.match(v):
+        raise ValueError("refusing QRadar filter with unsupported characters")
+    return v
 
 
 class QRadarConnector(SIEMConnector):
@@ -85,9 +105,10 @@ class QRadarConnector(SIEMConnector):
     ) -> list[dict[str, Any]]:
         where = ["1=1"]
         if host:
-            where.append(f"(sourceIP='{host}' OR destinationIP='{host}' OR hostname='{host}')")
+            h = _ariel_literal(host)
+            where.append(f"(sourceIP='{h}' OR destinationIP='{h}' OR hostname='{h}')")
         if user:
-            where.append(f"userName='{user}'")
+            where.append(f"userName='{_ariel_literal(user)}'")
         query = f"SELECT * FROM events WHERE {' AND '.join(where)} LAST 24 HOURS | LIMIT 50"
         return self._run_ariel(query)
 

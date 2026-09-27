@@ -14,6 +14,48 @@ from connectors.siem.mock import MockSiemConnector
 from connectors.siem.splunk import SplunkConnector
 
 
+class TestQRadarQuerySafety(unittest.TestCase):
+    """search_related_events builds an Ariel query by interpolation - the
+    values must be fail-closed literals so alert-derived data can never break
+    out of the WHERE clause (bandit B608)."""
+
+    def _conn(self):
+        from connectors.siem.qradar import QRadarConnector
+        return QRadarConnector(name="qt", config={"host": "https://qradar.example:443"})
+
+    def test_search_uses_properly_quoted_literals(self):
+        conn = self._conn()
+        captured = {}
+        conn._run_ariel = lambda q: captured.setdefault("q", q) or []
+        conn.search_related_events(host="10.0.0.9", user="svc-alerts")
+        q = captured["q"]
+        self.assertIn("(sourceIP='10.0.0.9' OR destinationIP='10.0.0.9' OR hostname='10.0.0.9')", q)
+        self.assertIn("userName='svc-alerts'", q)
+
+    def test_search_without_filters_still_builds(self):
+        conn = self._conn()
+        captured = {}
+        conn._run_ariel = lambda q: captured.setdefault("q", q) or []
+        conn.search_related_events()
+        self.assertIn("WHERE 1=1", captured["q"])
+
+    def test_search_rejects_quote_injection(self):
+        conn = self._conn()
+        conn._run_ariel = lambda q: []
+        with self.assertRaises(ValueError):
+            conn.search_related_events(host="10.0.0.9' OR 1=1 --")
+        with self.assertRaises(ValueError):
+            conn.search_related_events(user="x'; DROP TABLE events; --")
+        with self.assertRaises(ValueError):
+            conn.search_related_events(host="10.0.0.9\" OR 1=1")
+
+    def test_search_rejects_non_literal_charset(self):
+        conn = self._conn()
+        conn._run_ariel = lambda q: []
+        with self.assertRaises(ValueError):
+            conn.search_related_events(host="10.0.0.9 } UNION SELECT *")
+
+
 class TestRegistry(unittest.TestCase):
     def test_all_expected_platforms_registered(self):
         for p in ("splunk", "qradar", "elastic", "sentinel", "wazuh", "mock"):
