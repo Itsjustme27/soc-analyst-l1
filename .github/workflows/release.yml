@@ -1,0 +1,64 @@
+# Versioned release automation.
+#
+# Tagging `v1.2.3` on main triggers this workflow (docs/manual-tag, no
+# COCOAPODS-style app-store step - the SOC tool runs on the operator's own
+# machine). The changelog, version file and the tagged commit come from a
+# human-reviewed release branch / PR - this job only assembles the GitHub
+# release from what is already in the tree.
+
+name: Release
+
+on:
+  push:
+    tags:
+      - "v*"
+
+permissions:
+  contents: write
+
+jobs:
+  release:
+    name: Draft release ${{ github.ref_name }}
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Derive version
+        id: version
+        run: |
+          V=$(cat VERSION)
+          echo "version=$V" >> "$GITHUB_OUTPUT"
+          echo "tag=${GITHUB_REF_NAME#v}" >> "$GITHUB_OUTPUT"
+
+      - name: Extract changelog section
+        id: changelog
+        run: |
+          python - <<'EOF'
+          import re, pathlib
+          text = pathlib.Path("CHANGELOG.md").read_text()
+          blocks = re.split(r"\n## \[", text)[1:]
+          if not blocks:
+              print("changelog_empty=true")
+              raise SystemExit(0)
+          latest = "## [" + blocks[0]
+          latest = latest.split("\n## [")[0].rstrip()
+          print("changelog_empty=false")
+          with open("release_body.md", "w") as f:
+              f.write(latest + "\n")
+          EOF
+
+      - name: Build source archive
+        run: |
+          mkdir -p dist
+          # git archive instead of sdist: the tool is a source repo, not a wheel
+          git archive --format=tar.gz -o dist/soc-analyst-l1.tar.gz HEAD
+
+      - name: Create GitHub Release
+        uses: softprops/action-gh-release@v2
+        with:
+          tag_name: ${{ github.ref_name }}
+          name: soc-analyst-l1 v${{ steps.version.outputs.version }}
+          body_path: release_body.md
+          files: dist/soc-analyst-l1.tar.gz
+          draft: true
+          prerelease: false

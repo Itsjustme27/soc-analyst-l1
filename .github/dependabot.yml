@@ -1,0 +1,28 @@
+# Dependabot - keep the (small) runtime surface patched.
+
+version: 2
+updates:
+  # Runtime Python deps. Note: the project intentionally ships loose ranges
+  # (>=) - dependabot still PRs pin-drops when a newer minimum exists.
+  - package-ecosystem: "pip"
+    directory: "/"
+    schedule:
+      interval: "weekly"
+      day: "monday"
+      time: "06:00"
+      timezone: "Etc/UTC"
+    open-pull-requests-limit: 5
+    labels: ["dependencies"]
+    ignore:
+      # chromadb release cadence is very high and its transitive deps break
+      # the offline hashing-embedding fallback path often; only take real
+      # minimum-version bumps, not every release.
+      - dependency-name: "chromadb"
+        update-types: ["version-update:semver-minor", "version-update:semver-patch"]
+
+  - package-ecosystem: "github-actions"
+    directory: "/"
+    schedule:
+      interval: "monthly"
+    open-pull-requests-limit: 5
+    labels: ["dependencies", "ci"]

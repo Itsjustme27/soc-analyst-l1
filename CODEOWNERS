@@ -1,0 +1,16 @@
+# Default owners for everything in the repo.
+# A human reviews every PR; changes to the safety-critical surface need the
+# maintainer's explicit sign-off even when other reviewers approve.
+* @sabangiri7
+
+# Safety-critical surface: authz / approvals / permission model.
+dashboard.py @sabangiri7
+approvals.py @sabangiri7
+approval_executor.py @sabangiri7
+permissions.py @sabangiri7
+tools/registry.py @sabangiri7
+tools/guard.py @sabangiri7
+guard.py @sabangiri7
+
+# CLI agent surface (MCP / sub-agents / inline approvals).
+cli/ @sabangiri7
