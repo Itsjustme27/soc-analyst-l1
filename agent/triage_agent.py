@@ -20,6 +20,7 @@ import json
 from dataclasses import dataclass, field
 from typing import Any
 
+import guard
 from config import cfg
 from connectors.siem import SIEMConnector, get_siem_connector
 from llm import get_provider
@@ -41,7 +42,75 @@ def _tool_input(tc: Any) -> dict[str, Any]:
 
 MAX_TOOL_TURNS = 8
 
-SYSTEM_PROMPT = """You are an L1 SOC triage analyst agent. You investigate one \
+# --- auto-close trust boundary ------------------------------------------- #
+# These two sets ARE the boundary. They are module-level and deliberately
+# obvious: tightening or loosening what may close an alert without a human is a
+# policy decision an operator has to be able to see and change, not a constant
+# buried in a function body.
+#
+# AUTO_CLOSE_CORROBORATING_TOOLS - retrieval tools whose output counts as
+# human-authored. Only the knowledge base qualifies. Notably NOT web_search,
+# and not search_related_events: a web page is arbitrary internet text, and
+# full_log is attacker-controlled by construction.
+AUTO_CLOSE_CORROBORATING_TOOLS = frozenset(
+    {"retrieve_playbook", "retrieve_similar_cases", "retrieve_lessons"}
+)
+
+# HUMAN_AUTHORED_KINDS - the `kind` metadata a retrieved document must carry to
+# corroborate an auto-close. Anything else (a web-sourced doc, for one) means
+# the analyst read something no human wrote. A missing `kind` counts as
+# human-authored because that is how every pre-existing document looks, and
+# treating them as untrusted would break every current playbook.
+#
+# This is what stops untrusted content being laundered into the trust tier:
+# writing a web page's contents into the `lessons` collection does not make it
+# a lesson, as long as it is tagged with where it came from.
+HUMAN_AUTHORED_KINDS = frozenset({"playbook", "case", "lesson", "unlabelled"})
+
+# Fields the analyst is shown from a related event.
+#
+# WazuhConnector._normalize returns `raw_fields: src` - the ENTIRE document -
+# alongside a small normalized summary. The analyst has no use for the rest: it
+# reads description/host/user/severity/rule. Dropping the rest removes a large
+# volume of attacker-influenceable text (every data.* field, syslog metadata,
+# decoded JSON payloads) from the model's context, which is a bigger reduction
+# in injection surface than any amount of prompt wording.
+#
+# Projected HERE rather than in _normalize on purpose: that function is shared
+# with get_new_alerts and the watcher, so narrowing it would change what alert
+# intake stores. This is the analyst's view, and only the analyst's view.
+_EVENT_FIELDS = (
+    "alert_id",
+    "rule_id",
+    "rule_name",
+    "severity",
+    "description",
+    "host",
+    "user",
+    "src_ip",
+)
+
+
+def _project_event(event: Any) -> Any:
+    """Trim one related event to the fields the analyst actually reads."""
+    if not isinstance(event, dict):
+        return event
+    out = {k: event[k] for k in _EVENT_FIELDS if k in event}
+    # `description` carries full_log, which is the single most
+    # attacker-controlled string in the pipeline. It is genuinely useful for
+    # triage, so it is kept - but capped, and the rest of the document is not.
+    desc = out.get("description")
+    if isinstance(desc, str) and len(desc) > _DESCRIPTION_CAP:
+        out["description"] = desc[:_DESCRIPTION_CAP] + " [...]"
+    if "raw_fields" in event:
+        out["_dropped"] = "raw document omitted (not used for triage)"
+    return out
+
+
+_DESCRIPTION_CAP = 600
+
+SYSTEM_PROMPT = (
+    """You are an L1 SOC triage analyst agent. You investigate one \
 security alert at a time and must reach a verdict grounded in evidence you \
 actually retrieved - never guess at facts you haven't looked up.
 
@@ -60,7 +129,11 @@ Cite which specific evidence drove the verdict in your rationale.
 
 Be conservative: if evidence is ambiguous or incomplete, verdict should be \
 "escalate" with confidence reflecting that ambiguity, not a forced guess. \
-You never take containment actions yourself - you only recommend them."""
+You never take containment actions yourself - you only recommend them.
+
+"""
+    + guard.SYSTEM_GUARD_NOTICE
+)
 
 TOOLS = [
     {
@@ -189,21 +262,115 @@ class TriageResult:
     transcript: list[dict[str, Any]] = field(default_factory=list)
 
 
+def _retrieved_kinds(result: TriageResult) -> set[str]:
+    """Provenance `kind` of every knowledge-base document the analyst retrieved.
+
+    Read from the transcript, which records what the tools ACTUALLY returned -
+    never from `evidence_used`, which is a string list the model writes itself
+    and which an injection would simply forge. A doc carrying no `kind` predates
+    provenance tracking and counts as human-authored; that is the conservative
+    direction, since it can only make corroboration easier to reach, never
+    easier to fake.
+    """
+    kinds: set[str] = set()
+    for entry in result.transcript or []:
+        if not isinstance(entry, dict) or "tool_result" not in entry:
+            continue
+        payload = entry.get("tool_result")
+        docs = payload if isinstance(payload, list) else [payload]
+        for doc in docs:
+            if not isinstance(doc, dict):
+                continue
+            meta = doc.get("metadata")
+            kinds.add(
+                str((meta or {}).get("kind") or "unlabelled")
+                if isinstance(meta, dict)
+                else "unlabelled"
+            )
+    return kinds
+
+
+def _kb_tools_used(result: TriageResult) -> set[str]:
+    """Which knowledge-base retrieval tools were actually called."""
+    return {
+        str(e.get("tool"))
+        for e in (result.transcript or [])
+        if isinstance(e, dict) and e.get("tool") in AUTO_CLOSE_CORROBORATING_TOOLS
+    }
+
+
+def human_review_reasons(
+    result: TriageResult, rule_matches: list[dict[str, Any]] | None = None
+) -> list[str]:
+    """Every reason this verdict needs a human. Empty list == safe to auto-close.
+
+    The corroboration condition is the security-relevant one. An auto-close
+    means nobody looks at the alert, so the evidence behind it must not be
+    something an attacker could have written. The analyst reads two very
+    different kinds of source:
+
+      * the knowledge base - playbooks, closed cases, analyst lessons - written
+        by humans, so trustworthy;
+      * retrieved SIEM events, where `full_log` is whatever made the attacker
+        do the thing in the first place, so not.
+
+    A "false_positive / close_no_action" reached using only the second kind is
+    precisely the shape an injection aims to produce, so it is refused however
+    confident the model is. Requiring a human-authored source is a structural
+    defence, not a claim the model cannot be fooled - only that one injected log
+    line should not be able to close an alert by itself.
+    """
+    reasons: list[str] = []
+    if result.verdict == "escalate":
+        reasons.append("verdict is escalate")
+    if result.confidence < cfg.AUTO_CLOSE_CONFIDENCE_THRESHOLD:
+        reasons.append(
+            f"confidence {result.confidence:g} is below the auto-close threshold "
+            f"({cfg.AUTO_CLOSE_CONFIDENCE_THRESHOLD:g})"
+        )
+    if result.recommended_action in ("isolate_host", "disable_account"):
+        reasons.append(f"recommended action is {result.recommended_action}")
+    if any(m.get("action", {}).get("escalate") for m in (rule_matches or []) if m.get("triggered")):
+        reasons.append("a triggered rule has action.escalate set")
+
+    if reasons:
+        # Already going to a human. Appending a corroboration note would bury
+        # the reason that actually decided it.
+        return reasons
+
+    if not _kb_tools_used(result):
+        reasons.append(
+            "auto-close with no human-authored source: no playbook, similar case "
+            "or lesson was retrieved, so the only evidence is attacker-"
+            "influenceable event data"
+        )
+        return reasons
+
+    # Corroboration is a POSITIVE requirement, not a purity test: auto-close
+    # needs at least one human-authored document. Untrusted material alongside
+    # it is tolerated - it is already guard-wrapped and the prompt tells the
+    # model to treat it as data - because refusing outright the moment any
+    # web-sourced doc was read would mean one OSINT lookup disables auto-close
+    # for the whole alert, which is its own kind of failure.
+    retrieved = _retrieved_kinds(result)
+    if not (retrieved & HUMAN_AUTHORED_KINDS):
+        reasons.append(
+            "auto-close has no analyst-authored source: every retrieved document "
+            "was "
+            + (", ".join(sorted(retrieved)) or "unlabelled")
+            + ", and untrusted material cannot corroborate closing an alert"
+        )
+    return reasons
+
+
 def needs_human_review(
     result: TriageResult, rule_matches: list[dict[str, Any]] | None = None
 ) -> bool:
     """Single source of truth for the "does a human need to look at this"
     check - main.py, run.py, and dashboard.py's on-demand triage route all
-    call this instead of each re-implementing the same three conditions."""
-    rule_escalate = any(
-        m.get("action", {}).get("escalate") for m in (rule_matches or []) if m.get("triggered")
-    )
-    return (
-        result.verdict == "escalate"
-        or result.confidence < cfg.AUTO_CLOSE_CONFIDENCE_THRESHOLD
-        or result.recommended_action in ("isolate_host", "disable_account")
-        or rule_escalate
-    )
+    call this instead of each re-implementing the conditions. The reasons live
+    in human_review_reasons so a caller can show an operator WHY."""
+    return bool(human_review_reasons(result, rule_matches))
 
 
 class TriageAgent:
@@ -234,11 +401,12 @@ class TriageAgent:
         if name == "retrieve_lessons":
             return self.kb.query("lessons", tool_input["query"])
         if name == "search_related_events":
-            return self.siem.search_related_events(
+            events = self.siem.search_related_events(
                 host=tool_input.get("host"),
                 user=tool_input.get("user"),
                 earliest=tool_input.get("earliest", "-24h"),
             )
+            return [_project_event(e) for e in (events or [])]
         if name == "get_host_info":
             return self.crowdstrike.get_host_info(tool_input["host_id"])
         if name == "get_process_tree":
@@ -336,7 +504,15 @@ class TriageAgent:
                     {
                         "role": "tool",
                         "tool_call_id": call.id,
-                        "content": json.dumps(result, default=str),
+                        # Wrapped, because this is attacker-controlled text
+                        # going into a model's context. search_related_events
+                        # returns full_log and the entire raw document, and
+                        # full_log is whatever made the attacker write it - a
+                        # URL path, a username, a DNS query. Without the
+                        # wrapper a log line can carry instructions that the
+                        # model then follows into submit_verdict. The engineer
+                        # loop has always done this; the analyst did not.
+                        "content": guard.wrap_tool_output(guard.limit_result_size(result)),
                     }
                 )
             messages.extend(tool_results)

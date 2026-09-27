@@ -34,7 +34,24 @@ import chromadb
 from config import cfg
 from rag.embeddings import HashingEmbeddingFunction
 
-COLLECTIONS = ("playbooks", "cases", "lessons", "wazuh_docs")
+COLLECTIONS = ("playbooks", "cases", "lessons", "wazuh_docs", "web_intel")
+
+# Every document should carry a `kind` in its metadata saying who wrote it.
+# This is not decoration: agent/triage_agent.py decides whether a verdict may
+# AUTO-CLOSE (i.e. reach no human) based on whether the knowledge-base documents
+# it read are human-authored. An unlabelled document counts as human-authored,
+# because that is what every pre-existing document looks like - so tagging is
+# what makes the trust boundary enforceable, and leaving `kind` off a web-sourced
+# document is what would launder it into that tier.
+#
+#   playbook | case | lesson  - written by a human analyst
+#   wazuh-rule                 - ingested from the repo's own wazuh_docs/
+#   web                        - fetched from the internet; NOT trustworthy for
+#                                auto-closing an alert
+#
+# The kind a triage verdict may rely on is allowlisted in
+# triage_agent.HUMAN_AUTHORED_KINDS. Keep the two in step.
+WEB_SOURCED_KINDS = frozenset({"web"})
 
 
 def _embedding_function():
