@@ -801,8 +801,26 @@ def api_import_rules():
 # --------------------------------------------------------------------------- #
 # Agent control - overnight watchers: status, spawn, stop, KILL, logs.
 # --------------------------------------------------------------------------- #
+def _siem_selectors() -> set[str]:
+    """Every selector `run.py --siem` accepts: provider ids + platform names.
+
+    Mirrors siem_providers.resolve_connector() exactly so this allowlist can
+    never drift from what the watcher subprocess resolves. Provider ids are
+    generated as `siem-<uuid4 hex>` and platform names are fixed registry
+    keys, so every member is plain [A-Za-z0-9._-] and inert as an argument.
+    """
+    return {p["id"] for p in store.load_providers()} | set(store.SIEM_PLATFORMS)
+
+
 def _spawn_agent(agent_id: str, provider_id: str | None = None) -> int:
     """Start a run.py watcher for `agent_id`, capturing its output to run.log."""
+    # Fail-closed (CodeQL: "Uncontrolled command line"): a user-supplied
+    # --siem must resolve against the allowlist before it may enter the
+    # command line; anything else is rejected outright, never sanitized or
+    # escaped. The agent id is independently confined to a safe charset by
+    # ac.sanitize_id() before it is used in argv or on the filesystem.
+    if provider_id is not None and provider_id not in _siem_selectors():
+        raise ValueError(f"Unknown SIEM/pipeline '{provider_id}'.")
     agent_id = ac.sanitize_id(agent_id)
     stop = ac.stop_file_path(agent_id)
     stop.parent.mkdir(parents=True, exist_ok=True)
@@ -816,7 +834,11 @@ def _spawn_agent(agent_id: str, provider_id: str | None = None) -> int:
         cmd += ["--siem", provider_id]
     try:
         proc = subprocess.Popen(
-            cmd, stdout=log_fh, stderr=subprocess.STDOUT, start_new_session=True
+            cmd,
+            stdout=log_fh,
+            stderr=subprocess.STDOUT,
+            start_new_session=True,
+            shell=False,
         )
     finally:
         log_fh.close()
@@ -875,7 +897,17 @@ def api_agent_start():
         return denied
     body = request.get_json(force=True, silent=True) or {}
     provider_id = (body.get("provider_id") or "").strip() or None
-    pid = _spawn_agent("default", provider_id)
+    try:
+        pid = _spawn_agent("default", provider_id)
+    except ValueError as e:
+        _audit_write(
+            "agent_start",
+            {"agent_id": "default", "provider_id": provider_id},
+            None,
+            execution_status="failure",
+            error=str(e),
+        )
+        return jsonify({"error": str(e)}), 400
     _audit_write("agent_start", {"agent_id": "default", "provider_id": provider_id}, {"pid": pid})
     return jsonify({"ok": True, "pid": pid})
 
@@ -917,7 +949,17 @@ def api_agents_start():
     )
     if ac.status(agent_id)["running"]:
         return jsonify({"error": f"Watcher '{agent_id}' is already running."}), 409
-    pid = _spawn_agent(agent_id, provider_id)
+    try:
+        pid = _spawn_agent(agent_id, provider_id)
+    except ValueError as e:
+        _audit_write(
+            "agent_start",
+            {"agent_id": agent_id, "provider_id": provider_id},
+            None,
+            execution_status="failure",
+            error=str(e),
+        )
+        return jsonify({"error": str(e)}), 400
     _audit_write("agent_start", {"agent_id": agent_id, "provider_id": provider_id}, {"pid": pid})
     return jsonify({"ok": True, "agent_id": agent_id, "pid": pid})
 
