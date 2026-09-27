@@ -26,6 +26,17 @@ new since the informal
     (`usedforsecurity=False`).
   - MCP config now warns when a `${VAR}` referenced in `.mcp.json` is not set
     (previously substituted an empty string silently).
+- **PR #1 review fixes (2026-09-27)** — verified by the PR's own CI/CodeQL on the new head:
+  - Python 3.11 compatibility: the engineer CLI `find_tools` event line no longer puts a
+    `\u2026` escape inside an f-string expression (a `SyntaxError` on 3.11); a portable
+    pre-3.12 f-string gate (`scripts/check_py311_syntax.py`) now runs on every CI matrix.
+  - Dashboard watcher spawn (`POST /api/agent/start`, `POST /api/agents/start`) validates
+    `--siem` selectors fail-closed against the same allowlist `run.py` resolves (provider ids +
+    platform names); `shell=False` is now explicit (CodeQL "Uncontrolled command line").
+  - Dashboard API no longer echoes exception internals to clients: unexpected exceptions return
+    a generic message and the full traceback goes to the server log only, backed by a global
+    error handler returning a generic JSON 500 (CodeQL "Information exposure through an
+    exception").
 - `9c271b3` — role-gate the proposal routes, allow withdrawing an approval
   (approver role + verified identity on the Approval Center; cancellable
   pending/approved proposals).
