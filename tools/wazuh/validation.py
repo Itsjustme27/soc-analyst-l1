@@ -18,18 +18,23 @@ _REQUIRED_RULE_ATTRS = ("id", "level")
 _REQUIRED_DECODER_ATTRS = ("name",)
 
 
+from tools.wazuh.xmlio import UnsafeXmlError, safe_fromstring
+
+
 def parse_xml(xml_text: str) -> ET.Element | None:
     try:
-        return ET.fromstring(xml_text)
-    except ET.ParseError:
+        return safe_fromstring(xml_text)
+    except (ET.ParseError, UnsafeXmlError):
         return None
 
 
 def parse_error(xml_text: str) -> str:
     try:
-        ET.fromstring(xml_text)
+        safe_fromstring(xml_text)
         return ""
     except ET.ParseError as e:
+        return str(e)
+    except UnsafeXmlError as e:
         return str(e)
 
 

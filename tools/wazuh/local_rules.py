@@ -25,10 +25,13 @@ WRAP_GROUP_OPEN = f'<group name="{WRAP_GROUP}">'
 WRAP_GROUP_CLOSE = "</group>"
 
 
+from tools.wazuh.xmlio import UnsafeXmlError, safe_fromstring
+
+
 def parse_file(text: str) -> ET.Element | None:
     try:
-        return ET.fromstring(text)
-    except ET.ParseError:
+        return safe_fromstring(text)
+    except (ET.ParseError, UnsafeXmlError):
         return None
 
 
@@ -49,7 +52,7 @@ def _indent(elem: ET.Element, level: int = 0) -> str:
 def _rule_block(rule_xml: str) -> str:
     """Normalise a standalone <rule>...</rule> snippet to a consistent,
     2-space-indented block (Wazuh comment style)."""
-    root = ET.fromstring(rule_xml)
+    root = safe_fromstring(rule_xml)
     attrs = "".join(f' {k}="{v}"' for k, v in root.attrib.items())
     body = "".join(_indent(c, 2) + "\n" for c in root)
     return f"<rule{attrs}>\n{body}</rule>"
@@ -60,7 +63,7 @@ def merge_rule(file_text: str, rule_xml: str, overwrite: bool = False) -> tuple[
     file content + any issues. When `overwrite` is False and the id already
     exists, returns (file_text, [issue]) untouched."""
     issues: list[str] = []
-    rule = ET.fromstring(rule_xml)
+    rule = safe_fromstring(rule_xml)
     rid = rule.attrib.get("id")
     if not rid:
         return file_text, ["rule has no id"]
@@ -186,7 +189,7 @@ def extract_rule_text(file_text: str, rule_id: str | int) -> str | None:
 # decoders (local_decoder.xml is a sequence of <decoder> elements at root)
 # --------------------------------------------------------------------------- #
 def _decoder_block(decoder_xml: str) -> str:
-    root = ET.fromstring(decoder_xml)
+    root = safe_fromstring(decoder_xml)
     attrs = "".join(f' {k}="{v}"' for k, v in root.attrib.items())
     body = "".join(_indent(c, 1) + "\n" for c in root)
     return f"<decoder{attrs}>\n{body}</decoder>"
@@ -197,7 +200,7 @@ def merge_decoder(file_text: str, decoder_xml: str) -> tuple[str, list[str]]:
     issues. If a decoder with the same name exists and overwrite is false
     (default), refuses to touch the file."""
     issues: list[str] = []
-    root = ET.fromstring(decoder_xml)
+    root = safe_fromstring(decoder_xml)
     name = root.attrib.get("name")
     if not name:
         return file_text, ["decoder has no name"]
@@ -236,7 +239,7 @@ def replace_decoder(file_text: str, name: str, decoder_xml: str) -> tuple[str, b
     root = parse_file(file_text)
     if root is None:
         return file_text, False, ["local_decoder.xml is unparseable"]
-    new = ET.fromstring(decoder_xml)
+    new = safe_fromstring(decoder_xml)
     for i, d in enumerate(list(root)):
         if d.tag == "decoder" and d.attrib.get("name") == name:
             root.remove(d)
