@@ -37,7 +37,7 @@ def _tokenize(text: str) -> list[str]:
 def _embed_one(text: str, dims: int = DIMENSIONS) -> list[float]:
     vec = [0.0] * dims
     for token in _tokenize(text):
-        digest = hashlib.md5(token.encode("utf-8")).hexdigest()
+        digest = hashlib.md5(token.encode("utf-8"), usedforsecurity=False).hexdigest()
         h = int(digest, 16)
         idx = h % dims
         sign = 1.0 if (h // dims) % 2 == 0 else -1.0

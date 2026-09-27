@@ -44,6 +44,18 @@ class TestHashingEmbeddingFunction(unittest.TestCase):
         [vec] = ef([""])
         self.assertEqual(len(vec), 256)
 
+    def test_md5_bucket_marked_non_security(self):
+        # The hashing-fallback embedding buckets tokens via md5; it must be
+        # flagged usedforsecurity=False so scanners never mistake it for a
+        # cryptographic use (and FIPS mode won't reject it).
+        import hashlib
+        from unittest import mock
+        from rag.embeddings import _embed_one
+        with mock.patch("hashlib.md5", wraps=hashlib.md5) as md5:
+            vec = _embed_one("brute force login")
+        self.assertEqual(len(vec), 256)
+        self.assertTrue(any(c.kwargs.get("usedforsecurity") is False for c in md5.call_args_list))
+
     def test_shared_words_are_closer_than_disjoint_words(self):
         # crude sanity check of the actual retrieval property this is used for
         from rag.embeddings import HashingEmbeddingFunction
