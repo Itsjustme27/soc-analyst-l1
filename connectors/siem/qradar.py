@@ -109,7 +109,9 @@ class QRadarConnector(SIEMConnector):
             where.append(f"(sourceIP='{h}' OR destinationIP='{h}' OR hostname='{h}')")
         if user:
             where.append(f"userName='{_ariel_literal(user)}'")
-        query = f"SELECT * FROM events WHERE {' AND '.join(where)} LAST 24 HOURS | LIMIT 50"
+        # nosec B608 - the only dynamic input here is `where`, composed purely
+        # of _ariel_literal()-validated values (tested in test_siem.py)
+        query = f"SELECT * FROM events WHERE {' AND '.join(where)} LAST 24 HOURS | LIMIT 50"  # nosec B608
         return self._run_ariel(query)
 
     def close_notable(self, event_id: str, status: str, comment: str) -> None:

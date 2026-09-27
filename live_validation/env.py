@@ -153,7 +153,7 @@ class LiveEnv:
         (unique-marker cleanup of synthetic data)."""
         conn = self.indexer.connector
         url = f"{conn.host.rstrip('/')}/{index}/_delete_by_query?refresh=true"
-        r = requests.post(url, auth=conn.auth, verify=conn.verify,
+        r = requests.post(url, auth=conn.auth, verify=conn.verify,  # nosec B113 - timeout= on continuation line
                           json={"query": query or {"match_all": {}}},
                           timeout=getattr(cfg, "TOOL_QUERY_TIMEOUT", 15))
         if r.status_code >= 400:

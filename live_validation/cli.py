@@ -72,9 +72,9 @@ def build_parser() -> argparse.ArgumentParser:
                    help="admin/dev-environment op: restore the approval + audit stores "
                         "to the PHASE 14 baseline snapshot, keeping phase evidence "
                         "copies next to them (.phase14.*)")
-    p.add_argument("--snapshot-approvals", default="/tmp/opencode/phase14_backup/approvals_pre_phase14.json",
+    p.add_argument("--snapshot-approvals", default="/tmp/opencode/phase14_backup/approvals_pre_phase14.json",  # nosec B108 - operator-overridable argparse default for the pre-approved scratch dir
                    help="approvals snapshot to restore (default: pre-PHASE-14 baseline)")
-    p.add_argument("--snapshot-audit", default="/tmp/opencode/phase14_backup/audit_log_pre_phase14.jsonl",
+    p.add_argument("--snapshot-audit", default="/tmp/opencode/phase14_backup/audit_log_pre_phase14.jsonl",  # nosec B108 - operator-overridable argparse default for the pre-approved scratch dir
                    help="audit log snapshot to restore (default: pre-PHASE-14 baseline)")
     return p
 

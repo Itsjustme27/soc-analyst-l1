@@ -52,7 +52,8 @@ class WazuhAuthError(WazuhAPIError):
 
 
 def _looks_local(host: str) -> bool:
-    return any(marker in host for marker in ("localhost", "127.0.0.1", "0.0.0.0", "::1"))
+    # loopback markers, not a bind host (see connectors/siem/wazuh.py)
+    return any(marker in host for marker in ("localhost", "127.0.0.1", "0.0.0.0", "::1"))  # nosec B104
 
 
 def raise_for_inbody_error(resp: dict[str, Any], what: str) -> dict[str, Any]:
