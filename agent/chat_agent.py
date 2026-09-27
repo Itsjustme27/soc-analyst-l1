@@ -78,6 +78,11 @@ structured data you collected. You may call web_search for OSINT enrichment, \
 but treat its results as background information (the model may be imperfect); \
 always hedge web-sourced facts you cannot verify against the SIEM."""
 
+# Tool results in this loop are SIEM documents (full_log included) and arbitrary
+# internet text from web_search, and both reach the model. State the
+# untrusted-data rule explicitly - the other two agent loops already do.
+SYSTEM_PROMPT = SYSTEM_PROMPT + "\n\n" + guard.SYSTEM_GUARD_NOTICE
+
 TOOLS: list[dict[str, Any]] = [
     {
         "name": "get_alert_status",

@@ -74,6 +74,12 @@ class ToolContext:
     `approval` is the approved proposal (from approvals.approve()) when a
     write tool is being executed for real; None means "planning/dry-run", in
     which case write tools raise ApprovalRequired with their proposal.
+
+    `llm` is an optional LLMProvider for the few tools that GENERATE a draft
+    (dashboard intent planner, rule drafter) rather than only read/validate
+    one. It is a seam, not a hard dependency: leave it None and those tools
+    fall back to llm.get_provider(), and tests inject a stub instead of
+    calling a real model. Tools that don't generate must ignore it.
     """
 
     wazuh: WazuhManagerAPI
@@ -82,6 +88,15 @@ class ToolContext:
     agent: str = "soc_engineer"
     approval: dict[str, Any] | None = None
     params: dict[str, Any] = field(default_factory=dict)
+    llm: Any = None
+
+    def get_llm(self) -> Any:
+        """The injected provider, else the configured default."""
+        if self.llm is not None:
+            return self.llm
+        from llm import get_provider
+
+        return get_provider()
 
     # convenience accessors
     def approve_or_raise(self, proposed_action: dict[str, Any]) -> None:

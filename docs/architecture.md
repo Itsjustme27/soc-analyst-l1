@@ -31,7 +31,7 @@ user ──▶ scripts_engineer_cli.py (REPL/one-shot) ──▶ SOCEngineer (sa
 
   engines (each a BaseWazuhTool, registered in tools/registry.py):
     tools/investigate   top_attacking_ips / investigate_ip / why_did_alert_trigger
-    tools/detection     develop_wazuh_rule / verify_rule_deployment (+ rule CRUD)
+    tools/detection     draft_wazuh_rule (READ) / develop_wazuh_rule / verify_rule_deployment
     tools/dashboard     design_detection_dashboard
     tools/gaps          analyze_detection_gaps
     tools/wazuh         rules / decoders / agents / logtest / config / status

@@ -26,9 +26,9 @@ from typing import Any
 
 from tools.base import BaseWazuhTool, Permission, ToolContext, ToolError
 from tools.dashboard import osd_objects as osd
-from tools.dashboard import preview, threatintel
+from tools.dashboard import planner, preview, threatintel
 from tools.dashboard.client import dashboards_request
-from tools.indexer.queries import search_body, verify_opensearch_query
+from tools.indexer.queries import search_body, to_range_expr, verify_opensearch_query
 
 _INDEX = "wazuh-alerts-*"
 _PANEL_LIMIT = 8
@@ -337,11 +337,13 @@ def _panel_plan(focus: str, schema: dict[str, str]) -> list[dict[str, Any]]:
 class DesignDetectionDashboard(BaseWazuhTool):
     name = "design_detection_dashboard"
     description = (
-        "Dashboard engineering workflow: build a Wazuh-dashboard proposal (alert volume, "
-        "trend, top source IPs, rule groups, rules, levels, agents) from the real indexer "
-        "schema, verifying each panel's query actually matches data. Focus: web | ssh | "
-        "network | general. WRITE on execute: creates the visualizations + dashboard on the "
-        "Wazuh dashboard server (best-effort; requires human approval)."
+        "Dashboard engineering workflow: turn a request into a Wazuh-dashboard proposal "
+        "whose panels actually match the data, verifying every panel query against the real "
+        "indexer. Pass `intent` as free text (e.g. 'ssh failed logins from private IPs to "
+        "private IPs') to get a plan specific to that request; omit it to fall back to the "
+        "fixed `focus` template (web | ssh | network | general). WRITE on execute: creates "
+        "the visualizations + dashboard on the Wazuh dashboard server (best-effort; requires "
+        "human approval)."
     )
     input_schema = {
         "type": "object",
@@ -350,7 +352,19 @@ class DesignDetectionDashboard(BaseWazuhTool):
                 "type": "string",
                 "description": "dashboard title, e.g. 'Web Server Attacks'",
             },
-            "focus": {"type": "string", "description": "web | ssh | network | general"},
+            "intent": {
+                "type": "string",
+                "description": (
+                    "free-text description of what the dashboard should show, e.g. "
+                    "'ssh failed login from private to private ip'. Planned against the "
+                    "live index schema, then every panel query is verified. Optional; "
+                    "without it the `focus` template is used."
+                ),
+            },
+            "focus": {
+                "type": "string",
+                "description": "fallback template: web | ssh | network | general (used when no intent)",
+            },
             "description": {"type": "string"},
             "time_range": {"type": "string", "description": "verification window (default -7d)"},
             "reason": {"type": "string", "description": "why this dashboard is needed"},
@@ -385,7 +399,37 @@ class DesignDetectionDashboard(BaseWazuhTool):
             schema = ctx.indexer.field_caps(_INDEX)
         except Exception as e:  # noqa: BLE001
             raise ToolError(f"Cannot read indexer schema - dashboard design aborted: {e}") from e
-        panels = _panel_plan(focus, schema)
+
+        # 1a) free-text intent -> a plan specific to what was actually asked.
+        # Falls back to the fixed template whenever the planner is unavailable
+        # or returns something unusable, so this can only add specificity.
+        intent = str(p.get("intent") or "").strip()
+        plan_info: dict[str, Any] = {}
+        panels: list[dict[str, Any]] | None = None
+        if intent:
+            planned = planner.plan_dashboard(
+                ctx,
+                intent,
+                schema,
+                time_range_expr=to_range_expr(p.get("time_range") or "-7d"),
+                focus=focus,
+            )
+            if planned.get("ok"):
+                panels = planned["panels"]
+                plan_info = {
+                    "planned_from_intent": intent,
+                    "intent_notes": planned.get("notes", ""),
+                    "intent_filter": planned.get("filters", []),
+                    "planner_dropped": planned.get("dropped", []),
+                }
+            else:
+                plan_info = {
+                    "planned_from_intent": intent,
+                    "planner_fallback": planned.get("error", "planner unusable"),
+                    "planner_dropped": planned.get("dropped", []),
+                }
+        if panels is None:
+            panels = _panel_plan(focus, schema)
 
         # 2) verify each panel's query matches data (evidence)
         verified: list[dict[str, Any]] = []
@@ -405,6 +449,15 @@ class DesignDetectionDashboard(BaseWazuhTool):
                     "note": check.get("error", "panel query verified"),
                 }
             )
+
+        # 2a) an intent filter that matches nothing produces a dashboard of
+        # zeroes. Say so loudly instead of proposing seven empty panels - the
+        # approver should learn the request didn't match, not approve a blank
+        # screen. Only meaningful when a filter was actually applied.
+        empty_panels = [v["slug"] for v in verified if not v["matched"]]
+        if plan_info.get("intent_filter") and empty_panels:
+            plan_info["intent_filter_matched_nothing"] = True
+            plan_info["intent_filter_panels_empty"] = empty_panels
 
         # 3) index pattern (best-effort discovery + best-effort metadata for
         #    field validation - a missing/unreachable dashboards server here
@@ -455,7 +508,9 @@ class DesignDetectionDashboard(BaseWazuhTool):
             "version": 1,
             "attributes": osd.build_dashboard_attributes(
                 p["title"],
-                p.get("description") or f"Wazuh {focus} alert dashboard over {index_pattern}",
+                p.get("description")
+                or plan_info.get("intent_notes")
+                or f"Wazuh {focus} alert dashboard over {index_pattern}",
                 panels_json,
             ),
             "references": panel_refs,
@@ -467,11 +522,14 @@ class DesignDetectionDashboard(BaseWazuhTool):
             # Re-running this same workflow with an approved context executes
             # deterministically: it re-verifies each panel query against the
             # indexer, creates the visualizations and the dashboard, and reports
-            # only the server-confirmed ids. The payload is the tool's own input.
+            # only the server-confirmed ids. The payload is the tool's own input
+            # (intent included, so execution replans the same way).
             "action": "design_detection_dashboard",
             "reason": p.get("reason", ""),
             "payload": {
-                k: p[k] for k in ("title", "focus", "description", "time_range", "reason") if k in p
+                k: p[k]
+                for k in ("title", "intent", "focus", "description", "time_range", "reason")
+                if k in p
             },
             "permission": self.permission.value,
         }
@@ -496,6 +554,15 @@ class DesignDetectionDashboard(BaseWazuhTool):
             + vis_issues
             + dash_issues
         )
+        if plan_info.get("intent_filter_matched_nothing"):
+            errors.insert(
+                0,
+                "the intent filter matched 0 alerts in the window, so every panel is "
+                "empty: "
+                + json.dumps(plan_info.get("intent_filter"))
+                + " - reword the request or widen the time range",
+            )
+        errors.extend(f"planner dropped: {d}" for d in plan_info.get("planner_dropped") or [])
         validated = not errors
         proposed["validation"] = {
             "valid": validated,
@@ -509,6 +576,7 @@ class DesignDetectionDashboard(BaseWazuhTool):
                 "index": _INDEX,
                 "index_pattern": index_pattern,
                 "panels": verified,
+                **plan_info,
             },
             "next_steps": [
                 "approve -> create visualizations + dashboard on the dashboards server",

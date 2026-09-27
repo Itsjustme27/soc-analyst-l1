@@ -469,7 +469,13 @@ class TriageAgent:
     # ------------------------------------------------------------------ #
     def triage(self, alert: dict[str, Any]) -> TriageResult:
         messages: list[dict[str, Any]] = [
-            {"role": "user", "content": f"New alert to triage:\n\n{json.dumps(alert, indent=2)}"}
+            # The alert is raw SIEM data: rule names, descriptions and
+            # user-supplied fields are attacker-influenced text. Wrapped as
+            # untrusted DATA, like the tool results in this loop.
+            {
+                "role": "user",
+                "content": "New alert to triage:\n\n" + guard.wrap_log_data(alert),
+            }
         ]
         transcript: list[dict[str, Any]] = []
 

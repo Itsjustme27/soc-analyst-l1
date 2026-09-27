@@ -154,6 +154,25 @@ def execute(
             return {"status": "approval_required", "proposal": proposal}
         except PermissionDenied:
             raise
+        except ToolError as e:
+            # A PROPOSE tool does its own validation BEFORE it reaches
+            # approve_or_raise() - static rule checks, "id already exists",
+            # "at least one positive sample" - and signals those with ToolError.
+            # That happens inside this dry-run, so letting it escape turned
+            # every readable validation message into an opaque HTTP 500
+            # ("Internal server error.") in the builder UIs. Surface it exactly
+            # like step 3 does. Must come after ApprovalRequired/PermissionDenied,
+            # which are ToolError subclasses with different meanings.
+            audit.audit_log(
+                tool=tool_name,
+                params=tool.redact(clean),
+                permission=level.value,
+                execution_status="failed",
+                error=str(e),
+            )
+            if silent:
+                raise
+            return {"status": "error", "error": str(e)}
 
     # 3) run (READ here, or approved write)
     try:

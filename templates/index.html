@@ -948,18 +948,36 @@
 
   <!-- ============ RULE BUILDER (detection engineering) ============ -->
   <section class="view" id="view-rule-builder">
-    <div class="section-label">Detection rule builder — draft rule + sample logs → evidence-backed proposal</div>
+    <div class="section-label">Detection rule builder — describe the detection, review the draft, then propose it</div>
     <div class="card top-hairline" style="margin-bottom:14px;">
+      <div class="row" style="align-items:flex-end; padding-bottom:12px; margin-bottom:12px; border-bottom:1px solid var(--border);">
+        <div class="field" style="flex:2; min-width:280px;">
+          <label for="rb-intent">What should this rule detect?</label>
+          <input id="rb-intent" placeholder="e.g. ssh failed login from private to private ip">
+        </div>
+        <div class="field" style="min-width:130px; max-width:170px;">
+          <label for="rb-log-format">Log format</label>
+          <select id="rb-log-format">
+            <option value="syslog">syslog</option>
+            <option value="json">json</option>
+            <option value="eventlog">eventlog</option>
+          </select>
+        </div>
+        <div class="actions">
+          <button class="btn primary" onclick="generateRuleDraft()">Generate draft</button>
+        </div>
+      </div>
+      <div id="rule-draft-status"></div>
       <div class="row" style="align-items:flex-start;">
         <div class="field" style="flex:2; min-width:280px;">
-          <label for="rb-xml">Candidate rule XML</label>
+          <label for="rb-xml">Candidate rule XML <span class="meta">— review before proposing</span></label>
           <textarea id="rb-xml" rows="9" spellcheck="false" style="font-family:var(--mono); font-size:12px;"></textarea>
         </div>
         <div class="field" style="flex:1; min-width:220px;">
           <label for="rb-pos">Positive samples (one per line — must fire)</label>
           <textarea id="rb-pos" rows="4" spellcheck="false" style="font-family:var(--mono); font-size:12px;"></textarea>
-          <label for="rb-neg" style="margin-top:8px;">Negative samples (one per line — must NOT fire)</label>
-          <textarea id="rb-neg" rows="3" spellcheck="false" style="font-family:var(--mono); font-size:12px;"></textarea>
+          <label for="rb-neg" style="margin-top:8px;">Negative samples <span class="meta">— optional</span></label>
+          <textarea id="rb-neg" rows="3" spellcheck="false" style="font-family:var(--mono); font-size:12px;" placeholder="Optional. Leave empty if there is no genuine near-miss — a rule needs at least one positive sample, not a negative."></textarea>
         </div>
       </div>
       <div class="row" style="align-items:flex-end;">
@@ -969,7 +987,7 @@
         </div>
         <div class="actions">
           <button class="btn primary" onclick="runRuleBuilder()">Validate &amp; propose</button>
-          <button class="btn" onclick="loadRulePreset()" title="Fill a sensible SSH-brute-force starter">Starter rule</button>
+          <button class="btn" onclick="loadRulePreset()" title="Fill a fixed SSH-brute-force example">Starter rule</button>
         </div>
       </div>
     </div>
@@ -985,19 +1003,24 @@
           <label for="db-title">Dashboard title</label>
           <input id="db-title" placeholder="e.g. Web Server Attacks">
         </div>
-        <div class="field" style="min-width:150px; max-width:190px;">
-          <label for="db-focus">Focus</label>
+        <div class="field" style="min-width:260px; flex:2;">
+          <label for="db-intent">What should this dashboard show?</label>
+          <input id="db-intent" placeholder="e.g. ssh failed login from private to private ip">
+        </div>
+        <div class="field" style="min-width:130px; max-width:170px;">
+          <label for="db-focus">Fallback preset</label>
           <select id="db-focus">
+            <option value="general">general</option>
             <option value="web">web</option>
             <option value="ssh">ssh</option>
             <option value="network">network</option>
-            <option value="general">general</option>
           </select>
         </div>
         <div class="actions">
           <button class="btn primary" onclick="runDashboardBuilder()">Design &amp; propose</button>
         </div>
       </div>
+      <div class="meta" style="margin-top:6px;">The intent is planned against the live index schema and every panel query is verified. Leave it empty to use the preset above.</div>
     </div>
     <div id="dashboard-builder-out"><div class="card top-hairline"><div class="empty">Panel plan with verified query counts lands here.</div></div></div>
   </section>
@@ -2631,16 +2654,71 @@ function loadRulePreset() {
   toast("Starter rule loaded — adjust the samples to your logs", true);
 }
 
+/* Draft step: free text -> candidate XML + samples, filled into the form.
+   Nothing is proposed here - the drafter is READ and writes nothing, so you
+   read the actual XML before it can ever reach the Approval Center. */
+async function generateRuleDraft() {
+  const intent = $("rb-intent").value.trim();
+  if (!intent) { toast("Describe the detection first, e.g. \"ssh failed login from private to private ip\""); return; }
+  const status = $("rule-draft-status");
+  status.innerHTML = '<div class="meta" style="margin-bottom:8px;">Drafting from: "' + esc(intent) + '"…</div>';
+  try {
+    const out = await api("/api/engineer/tool", { method: "POST", body: JSON.stringify({
+      tool: "draft_wazuh_rule",
+      params: { intent, log_format: $("rb-log-format").value }
+    }) });
+    if (out.status === "error") { status.innerHTML = ""; status.appendChild(draftStatusCard(out.error, null)); return; }
+    const r = out.result || {};
+    $("rb-xml").value = r.rule_xml || "";
+    $("rb-pos").value = (r.positive_samples || []).join("\n");
+    $("rb-neg").value = (r.negative_samples || []).join("\n");
+    if (!$("rb-reason").value.trim()) $("rb-reason").value = intent;
+    status.innerHTML = ""; status.appendChild(draftStatusCard(null, r));
+    toast("Draft filled in — review the XML and samples, then Validate & propose", true);
+  } catch (e) { status.innerHTML = ""; status.appendChild(draftStatusCard(e.message, null)); }
+}
+
+/* The drafter self-checks with the same validator the propose step uses, so a
+   draft that cannot pass is flagged here rather than after a round trip. */
+function draftStatusCard(error, r) {
+  const card = document.createElement("div");
+  card.className = "card";
+  card.style.cssText = "padding:10px 12px; margin-bottom:12px;";
+  if (error) {
+    card.innerHTML = '<div class="meta" style="color:#ff8b7a;">Draft failed: ' + esc(error) + "</div>";
+    return card;
+  }
+  const v = (r && r.static_validation) || {};
+  const bits = [];
+  bits.push('<div class="meta">' + ((r.positive_samples || []).length) + " positive sample(s)" +
+    " · " + ((r.negative_samples || []).length) + " negative sample(s, optional)" +
+    (r.notes ? " · " + esc(r.notes) : "") + "</div>");
+  bits.push(v.valid
+    ? '<div class="meta" style="color:#68d391;">Static validation passed' + (v.rule_id ? " (id " + esc(v.rule_id) + ")" : "") + ". Nothing has been proposed — review the XML, then Validate &amp; propose.</div>"
+    : '<div class="meta" style="color:#ff8b7a;">This draft will be REJECTED by static validation: ' + esc((v.errors || []).join("; ")) + "</div>");
+  card.innerHTML = bits.join("");
+  return card;
+}
+
 async function runRuleBuilder() {
   const xml = $("rb-xml").value.trim();
   const pos = $("rb-pos").value.split("\n").map(s => s.trim()).filter(Boolean);
   const neg = $("rb-neg").value.split("\n").map(s => s.trim()).filter(Boolean);
-  if (!xml || !pos.length) { toast("Rule XML and at least one positive sample are required"); return; }
+  if (!xml) { toast("Rule XML is required — generate a draft or paste one"); return; }
+  // Negatives are genuinely optional: develop_wazuh_rule only needs one
+  // positive sample, and an invented near-miss teaches the model to pad.
+  if (!pos.length) { toast("At least one positive sample is required — a log line the rule must fire on"); return; }
   $("rule-builder-out").innerHTML = '<div class="card top-hairline"><div class="skeleton row"></div></div>';
   try {
     const out = await api("/api/engineer/tool", { method: "POST", body: JSON.stringify({
       tool: "develop_wazuh_rule",
-      params: { rule_xml: xml, positive_samples: pos, negative_samples: neg, reason: pv($("rb-reason").value, "rule builder") }
+      params: {
+        rule_xml: xml,
+        positive_samples: pos,
+        ...(neg.length ? { negative_samples: neg } : {}),
+        log_format: $("rb-log-format").value,
+        reason: pv($("rb-reason").value, "rule builder"),
+      }
     }) });
     renderRuleBuilder(out);
   } catch (e) { $("rule-builder-out").innerHTML = '<div class="card top-hairline"><div class="empty">error: ' + esc(e.message) + "</div></div>"; }
@@ -2673,12 +2751,21 @@ function renderRuleBuilder(out) {
 async function runDashboardBuilder() {
   const title = $("db-title").value.trim();
   if (!title) { toast("Dashboard title is required"); return; }
+  const intent = $("db-intent").value.trim();
   const focus = $("db-focus").value;
   $("dashboard-builder-out").innerHTML = '<div class="card top-hairline"><div class="skeleton row"></div></div>';
   try {
     const out = await api("/api/engineer/tool", { method: "POST", body: JSON.stringify({
       tool: "design_detection_dashboard",
-      params: { title, focus, reason: "Dashboard builder (" + focus + ")", time_range: "-7d" }
+      params: {
+        title,
+        // Free text drives a plan specific to the request. Empty -> the preset
+        // template. Either way every panel query is verified server-side.
+        ...(intent ? { intent } : {}),
+        focus,
+        reason: intent ? ("Dashboard builder: " + intent) : ("Dashboard builder (" + focus + ")"),
+        time_range: "-7d",
+      }
     }) });
     const box = $("dashboard-builder-out");
     box.innerHTML = "";
@@ -2686,11 +2773,43 @@ async function runDashboardBuilder() {
     const card = proposalCard(out.proposal);
     box.appendChild(card);
     const ev = (out.proposal.validation || {}).evidence || {};
+    const plan = dashboardPlanCard(ev);
+    if (plan) box.appendChild(plan);
     const pre = document.createElement("pre");
     pre.style.cssText = "background:var(--panel2); padding:8px; border-radius:6px; font-size:11px; max-height:220px; overflow:auto; margin-top:8px;";
     pre.textContent = JSON.stringify(ev, null, 1).slice(0, 1600);
     box.appendChild(pre);
   } catch (e) { $("dashboard-builder-out").innerHTML = '<div class="card top-hairline"><div class="empty">error: ' + esc(e.message) + "</div></div>"; }
+}
+
+/* What the planner actually did with the intent - which filters landed and
+   anything it had to throw away. A silent fallback to the generic template is
+   the failure mode this makes visible. Returns null when there is nothing to
+   say (the preset path). */
+function dashboardPlanCard(ev) {
+  const bits = [];
+  if (ev.planner_fallback) {
+    bits.push('<div class="meta" style="color:var(--warn,#e0a458);">Planner unavailable (' + esc(ev.planner_fallback) + ') — fell back to the ' + esc(ev.focus) + " template, so these panels are generic.</div>");
+  } else if (ev.planned_from_intent) {
+    bits.push('<div class="meta">Planned from: "' + esc(ev.planned_from_intent) + '"</div>');
+  }
+  if (ev.intent_notes) bits.push('<div class="meta">' + esc(ev.intent_notes) + "</div>");
+  if (ev.intent_filter && ev.intent_filter.length) {
+    bits.push('<div class="meta" style="font-family:var(--mono); margin-top:4px;">filter: ' + esc(JSON.stringify(ev.intent_filter)) + "</div>");
+  }
+  if (ev.intent_filter_matched_nothing) {
+    bits.push('<div class="meta" style="color:#ff8b7a;">The filter matched 0 alerts, so every panel is empty. Reword the request or widen the time range.</div>');
+  }
+  const dropped = ev.planner_dropped || [];
+  if (dropped.length) {
+    bits.push('<details style="margin-top:6px;"><summary class="meta" style="cursor:pointer;">' + dropped.length + " planner item(s) dropped</summary><div class=\"meta\" style=\"font-family:var(--mono);\">" + dropped.map(esc).join("<br>") + "</div></details>");
+  }
+  if (!bits.length) return null;
+  const card = document.createElement("div");
+  card.className = "card top-hairline";
+  card.style.marginTop = "8px";
+  card.innerHTML = '<div class="top"><div class="title">Plan</div></div>' + bits.join("");
+  return card;
 }
 
 /* ---------------- audit log ---------------- */

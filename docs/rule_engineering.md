@@ -5,9 +5,37 @@ verification against a Wazuh manager. Grounded in live-verified 4.14 behavior
 (see `wazuh_docs/wazuh-rules.md` and `wazuh_docs/wazuh-logtest.md` — both are
 seeded into the RAG store).
 
+## draft_wazuh_rule (READ) — generating the draft
+
+`draft_wazuh_rule(intent, log_format, parent_rule_id, log_sample)`
+
+Drafting is deliberately split from proposing:
+
+    draft_wazuh_rule        (READ)     generate — writes nothing, proposes nothing
+    develop_wazuh_rule      (PROPOSE)  validate + propose
+
+The model returns a candidate `<rule>` element plus realistic positive log
+samples. The result is meant to be **read and edited by a human** before it
+reaches `develop_wazuh_rule`, so a hallucinated rule can never become a
+pending approval on its own.
+
+- **Negatives are optional.** A request like "detect X" has no natural
+  near-miss log, and an invented one just teaches the model to pad. An empty
+  list is a truthful answer; `develop_wazuh_rule` only ever required one
+  positive sample.
+- **Self-check.** Whatever it generates is run through the same
+  `validate_wazuh_rule_xml` the propose step uses, and the verdict travels
+  back with the draft — so the UI can say "this will be rejected" before you
+  click anything. (The `frequency` ⇒ `if_matched_sid` rule in step 1 below is
+  exactly the kind of thing this catches.)
+- Samples are flattened to one line each and de-duplicated: a sample is a log
+  event, and logtest submits one event per call.
+- A missing `rule_xml` or an empty positive list is a `ToolError`, not a
+  half-filled draft.
+
 ## develop_wazuh_rule (PROPOSE)
 
-`develop_wazuh_rule(rule_xml, positive_samples, negative_samples, reason)`:
+`develop_wazuh_rule(rule_xml, positive_samples, negative_samples, log_format, reason)`:
 
 1. **Static validation** — `tools/wazuh/validation.py`:
    - required attributes: `id` (>= 100000 for local rules) and `level`

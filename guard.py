@@ -78,16 +78,15 @@ def to_log_data_markers(payload: Any) -> str:
     return f"{_LOG_DATA_OPEN}{payload}{_LOG_DATA_CLOSE}"
 
 
+_FORGED_MARKER_RE = re.compile(r"<(\s*/?\s*(?:TOOL_OUTPUT|LOG_DATA)\b)", re.IGNORECASE)
+
+
 def _neutralize_marker_breaks(text: str) -> str:
     """Escape marker-shaped strings that came from untrusted content, so a
     forged </TOOL_OUTPUT> / <TOOL_OUTPUT> inside log data cannot look like a
-    real section boundary to the model."""
-    return (
-        text.replace("</TOOL_OUTPUT", "&lt;/TOOL_OUTPUT")
-        .replace("<TOOL_OUTPUT", "&lt;TOOL_OUTPUT")
-        .replace("</LOG_DATA", "&lt;/LOG_DATA")
-        .replace("<LOG_DATA", "&lt;LOG_DATA")
-    )
+    real section boundary to the model. Case- and whitespace-insensitive:
+    `</tool_output>`, `< / TOOL_OUTPUT >` and `<Log_Data` are all defanged."""
+    return _FORGED_MARKER_RE.sub(r"&lt;\1", text)
 
 
 def wrap_tool_output(payload: Any, nonce: str | None = None) -> str:
@@ -108,6 +107,31 @@ def wrap_tool_output(payload: Any, nonce: str | None = None) -> str:
         f"\n<TOOL_OUTPUT id='{nonce}' role='data' source='wazuh'>\n"
         f"{text}\n</TOOL_OUTPUT id='{nonce}'>\n"
     )
+
+
+def wrap_log_data(payload: Any, nonce: str | None = None, max_len: int = 12000) -> str:
+    """Nonce-matched LOG_DATA wrapper for raw, attacker-influenced content
+    (e.g. a SIEM alert handed to the triage agent). Same guarantees as
+    wrap_tool_output; a larger default cap because alerts carry raw fields."""
+    if isinstance(payload, (dict, list)):
+        payload = json.dumps(payload, default=str)
+    text = _neutralize_marker_breaks(sanitize_text(str(payload), max_len))
+    nonce = nonce or secrets.token_hex(4)
+    return f"\n<LOG_DATA id='{nonce}' role='data'>\n{text}\n</LOG_DATA id='{nonce}'>\n"
+
+
+_UNWRAP_RE = re.compile(
+    r"^\s*<(TOOL_OUTPUT|LOG_DATA) id='(" + _NONCE + r")'[^>\n]*>\n(.*)\n</\1 id='\2'>\s*$",
+    re.DOTALL,
+)
+
+
+def unwrap(text: str) -> str:
+    """Payload back out of a single wrap_tool_output / wrap_log_data section,
+    for CODE that needs it (e.g. llm/mock_provider.py) - never for the model.
+    Text that isn't exactly one wrapped section is returned unchanged."""
+    m = _UNWRAP_RE.match(text or "")
+    return m.group(3) if m else text
 
 
 def is_wrapped(text: str, kind: str) -> bool:

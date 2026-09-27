@@ -110,6 +110,29 @@ Full reference: `wazuh_docs/cli.md`.
 
 ---
 
+
+### Connect external tools over MCP (optional)
+
+The terminal agent can use tools from any [MCP](https://modelcontextprotocol.io) server,
+the same way Claude Code does. MCP is optional - the CLI works without it.
+
+```bash
+pip install -r requirements-mcp.txt
+cp .mcp.json.example .mcp.json      # .mcp.json is git-ignored; edit it
+python scripts_engineer_cli.py      # connected servers are listed at startup
+```
+
+- `${VAR}` in `.mcp.json` is read from the environment / `.env` - keep secrets out of the file.
+- A tool listed in a server's `read_only_tools` runs freely. **Every other MCP tool asks for
+  approval before each call** (`[y]` once / `[a]` always this session / `[n]` deny); in
+  one-shot or `--json` runs they are refused.
+- Server-declared "read-only" hints are not trusted unless the server entry sets
+  `"trust_read_only_hints": true`.
+- MCP output is wrapped as untrusted DATA before the model sees it, and every call is written
+  to the audit log.
+- In the REPL: `/mcp`, `/mcp tools [server]`, `/mcp start|stop <server>`, `/mcp allow <tool>`.
+  Start without MCP with `--no-mcp`.
+
 ## What it does
 
 Point it at alerts from **Splunk, IBM QRadar, Elastic Security, Microsoft Sentinel, Wazuh, or a mock**. The agent:
@@ -607,43 +630,6 @@ All of them are role-gated and now write to the audit log (`tool="dashboard_ui"`
 - the **negatives** stay silent, which proves the rule is not over-matching.
 
 To confirm the correlation itself, push real events through analysisd (agent or syslog input) and read the alert stream, or check the rule is loaded and enabled with `GET /rules/<id>` and trust the live engine.
-
-### `event` is a log line — never rule XML
-
-`logtest` takes exactly one shape, on the unix socket
-(`/var/ossec/queue/sockets/logtest`) and on `PUT /logtest` alike:
-
-```json
-{ "log_format": "syslog",
-  "location":   "master->/var/log/auth.log",
-  "event":      "Dec 10 01:02:02 host sshd[1234]: Failed none for root from 1.1.1.1 port 1066 ssh2",
-  "token":      "<from the previous call; omit on the first>" }
-```
-
-`event` is **one real log line**. A `<rule>` block, a whole `local_rules.xml`,
-or a single line of one cannot decode, ever — the manager answers every one of
-them with `No decoder matched.`, so a harness that sweeps a rules file through
-`event` manufactures a clean-looking verdict for every line of a file that was
-never tested. To test a rule you load it into the ruleset (`PUT
-/rules/files/local_rules.xml` + manager restart) and then submit a real log line;
-`test_wazuh_rule` does the staging and makes that one call. Rule XML is checked
-for *structure* by `xmlio.safe_fromstring` / `tools/wazuh/validation.py`, which
-never touch the socket. `tools/wazuh/xmlio.py::ensure_real_event` now refuses
-rule XML at every boundary that feeds `event`, transport included.
-
-Two more things that read as verdicts but are not:
-
-- **Preflight first.** A session with no decoders loaded fails even a perfect
-  log line, so every result from it is garbage. Before trusting anything we
-  submit one known-good canonical line and require it to decode *and* fire stock
-  rule `5716` (`tests/fixtures/sample_events/sshd_failed_auth.log`). A failed
-  preflight is reported as "logtest session has no decoders loaded" with **no**
-  per-sample verdicts, rather than filing every sample as `no_decode`.
-- **Rule `1002` is a catch-all, not a null match.** It fires on anything that
-  decoded but matched no specific rule. On a *positive* sample that means the
-  sample never reached the candidate's match terms — usually the manager has not
-  been restarted since the rule was uploaded. That forces the verdict to
-  `inconclusive`, never `failed`.
 
 Two related gotchas this toolchain hit for real:
 

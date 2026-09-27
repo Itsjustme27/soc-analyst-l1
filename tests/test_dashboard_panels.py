@@ -8,6 +8,7 @@ Run: cd soc-agent && ./venv/bin/python -m unittest tests.test_dashboard_panels -
 from __future__ import annotations
 
 import os
+import shutil
 import tempfile
 import time
 import unittest
@@ -164,6 +165,7 @@ class TestDashboardRoutesOffline(unittest.TestCase):
 
     @classmethod
     def setUpClass(cls):
+        from config import cfg
         from dashboard import app
 
         app.config["TESTING"] = True
@@ -174,22 +176,40 @@ class TestDashboardRoutesOffline(unittest.TestCase):
         cls.tmp_lookup.close()
         cls.orig_lookup_path = os.getenv("LOOKUP_TABLES_PATH", "")
         os.environ["LOOKUP_TABLES_PATH"] = cls.tmp_lookup.name
-        # Also clear any leftover chat/triage logs
-        Path("data/chat_log.jsonl").unlink(missing_ok=True)
-        Path("data/triage_log.jsonl").unlink(missing_ok=True)
+        # Point the logs at throwaway files. This used to
+        # `unlink("data/triage_log.jsonl")` / `unlink("data/chat_log.jsonl")` to
+        # get a clean slate, which silently DESTROYED the developer's real
+        # triage + chat history on every test run (data/ is gitignored, so
+        # there is no way to recover it). Both readers resolve their path from
+        # cfg at call time, so repointing cfg is enough - and the originals are
+        # put back in tearDownClass.
+        cls._orig_log_paths = {
+            k: getattr(cfg, k) for k in ("TRIAGE_LOG_PATH", "CHAT_LOG_PATH")
+        }
+        tmpdir = tempfile.mkdtemp(prefix="dashboard-panels-")
+        cls._tmp_logs = tmpdir
+        for key, filename in (
+            ("TRIAGE_LOG_PATH", "triage_log.jsonl"),
+            ("CHAT_LOG_PATH", "chat_log.jsonl"),
+        ):
+            p = Path(tmpdir) / filename
+            p.write_text("")
+            setattr(cfg, key, str(p))
 
     @classmethod
     def tearDownClass(cls):
+        from config import cfg
+
         Path(cls.tmp_lookup.name).unlink(missing_ok=True)
         if cls.orig_lookup_path:
             os.environ["LOOKUP_TABLES_PATH"] = cls.orig_lookup_path
         else:
             os.environ.pop("LOOKUP_TABLES_PATH", None)
-        Path("data/chat_log.jsonl").unlink(missing_ok=True)
-        Path("data/triage_log.jsonl").unlink(missing_ok=True)
+        # Restore the real log locations, then drop the throwaway copies.
+        for k, v in cls._orig_log_paths.items():
+            setattr(cfg, k, v)
+        shutil.rmtree(cls._tmp_logs, ignore_errors=True)
         # Clean agent artifacts
-        from config import cfg
-
         for p in [cfg.AGENT_HEARTBEAT_PATH, cfg.AGENT_STOP_FILE]:
             Path(p).unlink(missing_ok=True)
 
@@ -212,13 +232,14 @@ class TestDashboardRoutesOffline(unittest.TestCase):
         self.assertIn("transcript_len", body)
 
     def test_chat_history_empty(self):
-        # Ensure a clean state — remove any leftover chat log from prior runs
-        Path("data/chat_log.jsonl").unlink(missing_ok=True)
+        # Truncate the throwaway chat log that setUpClass pointed cfg at -
+        # never the developer's real data/chat_log.jsonl.
+        Path(self._tmp_logs, "chat_log.jsonl").write_text("")
         r = self.client.get("/api/chat/history")
         self.assertEqual(r.status_code, 200)
         self.assertEqual(r.get_json()["count"], 0)
         # Clean up after
-        Path("data/chat_log.jsonl").unlink(missing_ok=True)
+        Path(self._tmp_logs, "chat_log.jsonl").write_text("")
 
     def test_chat_append_then_read_back(self):
         self.client.post("/api/chat", json={"message": "test msg"})

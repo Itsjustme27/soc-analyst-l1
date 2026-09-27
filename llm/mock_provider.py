@@ -22,9 +22,84 @@ from __future__ import annotations
 import json
 from typing import Any
 
+import guard
 from llm.base import LLMProvider, LLMResponse, ToolCall
 
 ALERT_PREFIX = "New alert to triage:"
+
+
+# --------------------------------------------------------------------------- #
+# scripted answers for the two generative builder prompts (dashboard planner,
+# rule drafter). Deterministic, key-free stand-ins for a real model so
+# MOCK_MODE demos and the offline test suite exercise the real code paths.
+
+
+def _mock_dashboard_plan(user_msg: str) -> dict[str, Any]:
+    blob = (user_msg or "").lower()
+    filters: list[dict[str, Any]] = []
+    panels: list[dict[str, Any]] = []
+    if "ssh" in blob or "login" in blob or "auth" in blob:
+        filters.append({"field": "rule_group", "op": "match_phrase", "values": ["ssh"]})
+        panels += [
+            {"kind": "breakdown", "field": "src_ip", "vis": "pie"},
+            {"kind": "breakdown", "field": "dst_ip", "vis": "bar"},
+            {"kind": "breakdown", "field": "user", "vis": "bar"},
+            {"kind": "breakdown", "field": "rule_level", "vis": "bar"},
+        ]
+    if "private" in blob:
+        private = ["10.0.0.0/8", "172.16.0.0/12", "192.168.0.0/16"]
+        filters.append({"field": "src_ip", "op": "cidr", "values": private})
+        filters.append({"field": "dst_ip", "op": "cidr", "values": private})
+    if "web" in blob:
+        filters.append({"field": "rule_group", "op": "match_phrase", "values": ["web"]})
+        panels.append({"kind": "breakdown", "field": "src_ip", "vis": "pie"})
+    panels.append({"kind": "breakdown", "field": "agent", "vis": "bar"})
+    return {
+        "title": "Mock Planned Dashboard",
+        "filters": filters,
+        "panels": panels,
+        "notes": "Scripted mock plan (no model was called).",
+    }
+
+
+def _mock_rule_draft(user_msg: str) -> dict[str, Any]:
+    blob = (user_msg or "").lower()
+    rule_xml = (
+        '<rule id="100250" level="10" frequency="5" timeframe="120">\n'
+        "  <if_matched_sid>5760</if_matched_sid>\n"
+        "  <description>Mock: repeated failed logins from one source (scripted draft)"
+        "</description>\n"
+        "  <group>authentication_failures,</group>\n"
+        "</rule>"
+    )
+    positives = [
+        "Nov 21 09:41:01 db01 sshd[2710]: Failed password for invalid user root from 10.10.4.22 port 44555 ssh2",
+        "Nov 21 09:41:04 db01 sshd[2710]: Failed password for invalid user admin from 10.10.4.22 port 44561 ssh2",
+        "Nov 21 09:41:09 db01 sshd[2710]: Failed password for invalid user oracle from 10.10.4.22 port 44570 ssh2",
+    ]
+    negatives: list[str] = []
+    if "web" in blob or "http" in blob:
+        rule_xml = (
+            '<rule id="100251" level="12">\n'
+            '  <match type="pcre2">"GET [^"]*" 40[0-9] </match>\n'
+            "  <description>Mock: repeated HTTP 40x responses (scripted draft)</description>\n"
+            "  <group>web,</group>\n"
+            "</rule>"
+        )
+        positives = [
+            'Nov 21 09:41:02 web01 nginx: 10.10.4.22 - - "GET /admin.php HTTP/1.1" 404 162 "-" "curl/8.4.0"',
+            'Nov 21 09:41:05 web01 nginx: 10.10.4.22 - - "GET /.env HTTP/1.1" 404 162 "-" "curl/8.4.0"',
+        ]
+        negatives = [
+            'Nov 21 09:41:09 web01 nginx: 10.10.4.30 - - "GET /health HTTP/1.1" 200 12 "-" "kube-probe/1.29"'
+        ]
+    return {
+        "rule_xml": rule_xml,
+        "positive_samples": positives,
+        "negative_samples": negatives,
+        "log_format": "syslog",
+        "notes": "Scripted mock draft (no model was called).",
+    }
 
 
 # --------------------------------------------------------------------------- #
@@ -40,7 +115,7 @@ def _first_alert(messages: list[dict[str, Any]]) -> dict[str, Any] | None:
             and content.startswith(ALERT_PREFIX)
         ):
             try:
-                return json.loads(content[len(ALERT_PREFIX) :])
+                return json.loads(guard.unwrap(content[len(ALERT_PREFIX) :].strip()))
             except json.JSONDecodeError:
                 return {}
     return None
@@ -70,7 +145,7 @@ def _tool_results(messages: list[dict[str, Any]]) -> dict[str, Any]:
     for m in messages:
         if m.get("role") == "tool":
             try:
-                out[m["tool_call_id"]] = json.loads(m["content"])
+                out[m["tool_call_id"]] = json.loads(guard.unwrap(m["content"]))
             except (KeyError, json.JSONDecodeError):
                 out[m.get("tool_call_id", "")] = {"raw": m.get("content")}
     return out
@@ -172,6 +247,27 @@ class MockProvider(LLMProvider):
             ),
             ToolCall(id="mock-3", name="retrieve_lessons", input={"query": "known noisy patterns"}),
         ]
+
+    # ------------------------------------------------------------------ #
+    def chat_text(self, *, system, messages, max_tokens) -> str:
+        """Answer the two GENERATIVE builder prompts offline.
+
+        The engineer console calls chat_text (no tools) to plan a dashboard from
+        a free-text intent and to draft a rule from a request. Both expect a
+        single JSON object. Scripted answers keep MOCK_MODE demos and the test
+        suite working with no API key; anything else still returns the neutral
+        no-op reply below."""
+        system = system or ""
+        last = ""
+        for m in reversed(messages or []):
+            if m.get("role") == "user":
+                last = str(m.get("content") or "")
+                break
+        if "plan Wazuh security dashboards" in system:
+            return json.dumps(_mock_dashboard_plan(last))
+        if "You write Wazuh detection rules" in system:
+            return json.dumps(_mock_rule_draft(last))
+        return "[]"
 
     # ------------------------------------------------------------------ #
     def chat(self, *, system, messages, tools, max_tokens) -> LLMResponse:

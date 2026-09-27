@@ -9,6 +9,57 @@ the tag + `VERSION` + this file's latest section into a GitHub release.
 
 ## [Unreleased]
 
+### Added
+
+- **Intent-driven builders.** Both builder UIs were template machines.
+  `design_detection_dashboard` took `focus` as a closed enum
+  (`web|ssh|network|general`) and ignored free text, so "ssh failed login from
+  private to private ip" produced the same seven generic panels as any other
+  request — the request itself was parked in the proposal's `reason` field. The
+  Rule builder demanded hand-written XML plus samples, leaving one hardcoded SSH
+  "Starter rule" as the only way in.
+  - `design_detection_dashboard` now takes an optional free-text `intent`. The
+    model chooses a title, filter clauses and panels from a **closed**
+    vocabulary (`tools/dashboard/planner.py`); the code maps those to real index
+    fields, drops anything absent from the live `field_caps` schema, renders the
+    aggs, and the caller still verifies every panel query against the real
+    indexer. The model never emits OpenSearch DSL and never names a field. With
+    no `intent`, the old preset path is unchanged.
+  - New READ tool `draft_wazuh_rule` (`tools/detection/drafter.py`): plain
+    language → candidate `<rule>` XML + realistic positive samples, filled into
+    the form for review. Negatives are optional — an empty list is a truthful
+    answer, and `develop_wazuh_rule` never required one. It self-checks with the
+    same `validate_wazuh_rule_xml` the propose step uses, so a doomed draft is
+    flagged before you click anything. It proposes nothing and writes nothing.
+  - `ToolContext.llm` / `ToolContext.get_llm()` — an injection seam for the two
+    generative tools, so tests stub the model instead of calling one.
+  - An intent filter that matches 0 alerts is a **validation error** rather than
+    a proposal for seven empty panels.
+  - `guard.wrap_log_data()` (nonce-matched wrapper for raw alert content) and
+    `guard.unwrap()` (payload back out, for code — never for the model), plus
+    case- and whitespace-insensitive forged-marker defanging.
+
+### Fixed
+
+- **Builder validation errors no longer surface as "Internal server error."**
+  `registry.execute()` runs PROPOSE tools in a dry-run to collect their
+  proposal, and their own validation (static rule checks, "rule id already
+  exists", "needs a positive sample") raises `ToolError` from *inside* that
+  dry-run. Only `ApprovalRequired` and `PermissionDenied` were caught, so the
+  `ToolError` escaped and became an opaque HTTP 500. It is now caught and
+  returned as `{"status": "error", "error": <the real message>}`.
+- **Panel filters were silently dropped from created dashboards.**
+  `osd_objects._filters()` understood only `term` and `range`, so a
+  `match_phrase`, `terms`, or a `bool.should` of CIDR ranges vanished from the
+  saved visualization — the evidence panel showed correct filtered counts while
+  the created dashboard rendered *every* alert. All clause kinds now
+  round-trip, and an unrecognised one is emitted as a custom filter rather than
+  dropped.
+- `tests/test_dashboard_panels.py` no longer deletes the developer's real
+  `data/triage_log.jsonl` / `data/chat_log.jsonl` in `setUpClass`/`tearDownClass`;
+  it points `cfg` at throwaway files and restores them. `data/` is gitignored, so
+  that was unrecoverable.
+
 First formal release candidate (`VERSION` = 1.0.0). Everything below is
 new since the informal
 

@@ -233,21 +233,37 @@ def build_vis_state(
 # search source + references
 # --------------------------------------------------------------------------- #
 def _filters(query: dict[str, Any] | None, index_pattern_id: str) -> list[dict[str, Any]]:
+    """Render query-DSL filter clauses as OpenSearch Dashboards filter entries.
+
+    A silent-drop bug lived here: only `term` and `range` were handled, so any
+    other clause the planner produced (`match_phrase`, `terms`, a `bool.should`
+    of CIDR ranges) vanished from the saved visualization. The panel still
+    looked right in the verification query while the created dashboard
+    rendered EVERY alert - the filter was cosmetic. Every clause kind that can
+    reach here now round-trips, and an unrecognised one is emitted as a custom
+    filter carrying the raw query rather than being dropped.
+    """
     out: list[dict[str, Any]] = []
+
+    def meta(key: str, ftype: str, params: dict[str, Any]) -> dict[str, Any]:
+        return {
+            "index": index_pattern_id,
+            "type": ftype,
+            "key": key,
+            "params": params,
+            "negate": False,
+            "disabled": False,
+            "alias": None,
+        }
+
     for clause in ((query or {}).get("bool") or {}).get("filter") or []:
+        if not isinstance(clause, dict) or not clause:
+            continue
         if "term" in clause:
             field = next(iter(clause["term"]))
             out.append(
                 {
-                    "meta": {
-                        "index": index_pattern_id,
-                        "type": "phrase",
-                        "key": field,
-                        "params": {"query": clause["term"][field]},
-                        "negate": False,
-                        "disabled": False,
-                        "alias": None,
-                    },
+                    "meta": meta(field, "phrase", {"query": clause["term"][field]}),
                     "query": {"match_phrase": {field: clause["term"][field]}},
                     "$state": {"store": "appState"},
                 }
@@ -256,16 +272,50 @@ def _filters(query: dict[str, Any] | None, index_pattern_id: str) -> list[dict[s
             field = next(iter(clause["range"]))
             out.append(
                 {
-                    "meta": {
-                        "index": index_pattern_id,
-                        "type": "range",
-                        "key": field,
-                        "params": clause["range"][field],
-                        "negate": False,
-                        "disabled": False,
-                        "alias": None,
-                    },
+                    "meta": meta(field, "range", clause["range"][field]),
                     "range": clause["range"],
+                    "$state": {"store": "appState"},
+                }
+            )
+        elif "terms" in clause:
+            field, values = next(iter(clause["terms"].items()))
+            out.append(
+                {
+                    "meta": meta(field, "terms", {"query": values}),
+                    "query": {"terms": {field: values}},
+                    "$state": {"store": "appState"},
+                }
+            )
+        elif "match_phrase" in clause:
+            field, value = next(iter(clause["match_phrase"].items()))
+            out.append(
+                {
+                    "meta": meta(field, "phrase", {"query": value}),
+                    "query": {"match_phrase": {field: value}},
+                    "$state": {"store": "appState"},
+                }
+            )
+        elif "bool" in clause:
+            # An OR group (e.g. several private CIDRs on one field). The
+            # Dashboards filter array is AND-only, so the whole bool goes in as
+            # one custom filter's `query`.
+            inner = clause["bool"]
+            key = next(iter(inner.get("should") or [{}]), "bool")
+            out.append(
+                {
+                    "meta": meta(key if isinstance(key, str) else "bool", "custom", {"query": inner}),
+                    "query": inner,
+                    "$state": {"store": "appState"},
+                }
+            )
+        else:
+            # Never drop a clause we don't understand - that is how a filter
+            # silently stops applying. Emit it as a custom filter.
+            key = next(iter(clause), "custom")
+            out.append(
+                {
+                    "meta": meta(key, "custom", {"query": clause}),
+                    "query": clause,
                     "$state": {"store": "appState"},
                 }
             )
