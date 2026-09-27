@@ -38,30 +38,53 @@ def execute_proposal(
     path: Any = None,
 ) -> dict[str, Any]:
     """Returns {"ok": bool, "error"?, "result"?, "http_status": int}."""
+
+    # Every rejection below is audited before returning. An attempt that never
+    # reaches the tool used to leave NO trace at all, because these early
+    # returns all fired ahead of the success-path audit. That made a refused
+    # execution indistinguishable from an attempt that was never made - which
+    # is exactly the question you cannot answer when an operator says "execute
+    # does nothing" and the audit log is empty. A gate rejection is the thing
+    # most worth having a record of: it is someone probing the approval path.
+    def _refuse(message: str, http_status: int, action_: str = "") -> dict[str, Any]:
+        audit.audit_log(
+            tool="approval_center",
+            action="proposal_execution_refused",
+            permission="human",
+            approval_status=(p or {}).get("status") or "unknown",
+            execution_status="refused",
+            params={},
+            user=by,
+            error=message,
+            result={
+                "proposal_id": proposal_id,
+                "tool": action_ or (p or {}).get("action", ""),
+                "by": by,
+                "identity_verified": identity_verified,
+                "http_status": http_status,
+            },
+        )
+        return {"ok": False, "error": message, "http_status": http_status}
+
     p = approvals.get_proposal(proposal_id, path=path)
     if not p:
-        return {"ok": False, "error": f"Proposal {proposal_id} not found.", "http_status": 404}
+        return _refuse(f"Proposal {proposal_id} not found.", 404)
     if p.get("status") != "approved":
-        return {
-            "ok": False,
-            "http_status": 409,
-            "error": f"Proposal {proposal_id} is not approved (status: {p.get('status')}).",
-        }
+        return _refuse(f"Proposal {proposal_id} is not approved (status: {p.get('status')}).", 409)
     action = p.get("action", "")
     if permissions.needs_confirmation(action, p.get("permission")) and not confirm:
-        return {
-            "ok": False,
-            "http_status": 400,
-            "error": "EXECUTE-level action: this requires an explicit confirmation "
-            "on top of the approval.",
-        }
+        return _refuse(
+            "EXECUTE-level action: this requires an explicit confirmation on top of the approval.",
+            400,
+            action,
+        )
 
     try:
         claimed = approvals.claim_for_execution(
             proposal_id, by, path=path, identity_verified=identity_verified
         )
     except (ValueError, KeyError) as e:
-        return {"ok": False, "error": str(e), "http_status": 409}
+        return _refuse(str(e), 409, action)
 
     ctx = ctx_factory(by)
     ctx.approval = claimed  # gates the tool's approve_or_raise

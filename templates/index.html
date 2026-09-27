@@ -2311,7 +2311,7 @@ function proposalCard(p) {
   const val = p.validation || {};
   const ev = val.evidence;
   let evHtml = "";
-  if (ev && ev.baseline_summary) evHtml = '<div style="font-size:12px; margin-top:6px;"<b>Baseline:</b> ' + esc(ev.baseline_summary) + "</div>";
+  if (ev && ev.baseline_summary) evHtml = '<div style="font-size:12px; margin-top:6px;"><b>Baseline:</b> ' + esc(ev.baseline_summary) + "</div>";
   if (ev && Array.isArray(ev.panels)) {
     evHtml = evHtml + '<div style="font-size:11px; margin-top:6px; color:var(--muted); font-family:var(--mono);">' +
       ev.panels.map(x => x.slug + ": " + x.matched + " matched").join(" · ") + "</div>";
