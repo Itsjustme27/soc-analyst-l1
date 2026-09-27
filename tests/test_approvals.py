@@ -37,8 +37,15 @@ class _TempStore(unittest.TestCase):
                 "APPROVAL_EXECUTE_MIN_APPROVERS",
                 "APPROVAL_PROPOSE_MIN_APPROVERS",
                 "APPROVALS_PATH",
+                # Redirect the audit log too. Without this, every refusal and
+                # every execution in these tests appends to the REAL
+                # data/audit_log.jsonl - which then fills with test identities
+                # ("bob") and makes the audit trail useless for answering why a
+                # real operator's action did or did not happen.
+                "AUDIT_LOG_PATH",
             )
         }
+        cfg.AUDIT_LOG_PATH = str(Path(self.dir) / "audit.jsonl")
 
     def tearDown(self):
         for k, v in self._orig.items():
