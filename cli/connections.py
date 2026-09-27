@@ -7,20 +7,27 @@ Secrets are read with getpass (never echoed, never printed back): listings
 always go through siem_providers.redact_provider. /model changes the LLM
 backend for THIS CLI process only - .env is not edited.
 """
+
 from __future__ import annotations
 
 import getpass
-from typing import Any, Callable
+from collections.abc import Callable
+from typing import Any
 
 import siem_providers as store
 from config import cfg
 
-_MODEL_ATTRS = {"anthropic": "ANTHROPIC_MODEL", "openai": "OPENAI_MODEL",
-                "google": "GOOGLE_MODEL", "freellmapi": "FREELLMAPI_MODEL"}
+_MODEL_ATTRS = {
+    "anthropic": "ANTHROPIC_MODEL",
+    "openai": "OPENAI_MODEL",
+    "google": "GOOGLE_MODEL",
+    "freellmapi": "FREELLMAPI_MODEL",
+}
 
 
 def platforms() -> dict[str, Any]:
     from connectors.siem import PLATFORM_FIELDS
+
     return PLATFORM_FIELDS
 
 
@@ -34,15 +41,25 @@ def _coerce(field: dict[str, Any], raw: str) -> Any:
     return raw
 
 
-def connect(platform: str, *, name: str | None = None,
-            ask: Callable[[str], str] = input,
-            ask_secret: Callable[[str], str] = getpass.getpass) -> dict[str, Any]:
+def connect(
+    platform: str,
+    *,
+    name: str | None = None,
+    ask: Callable[[str], str] = input,
+    ask_secret: Callable[[str], str] = getpass.getpass,
+) -> dict[str, Any]:
     """Prompt for each platform field and save the connection. Returns the
     REDACTED provider record."""
     spec = platforms().get(platform)
     if not spec:
-        raise ValueError(f"Unknown platform '{platform}'. Choose from: {', '.join(sorted(platforms()))}")
-    name = name or ask(f"Connection name [{spec.get('label', platform)}]: ").strip() or spec.get("label", platform)
+        raise ValueError(
+            f"Unknown platform '{platform}'. Choose from: {', '.join(sorted(platforms()))}"
+        )
+    name = (
+        name
+        or ask(f"Connection name [{spec.get('label', platform)}]: ").strip()
+        or spec.get("label", platform)
+    )
     config: dict[str, Any] = {}
     for f in spec.get("fields", []):
         label = f.get("label", f["key"])
@@ -79,6 +96,7 @@ def test(provider_id: str) -> dict[str, Any]:
 
 def llm_backends() -> list[str]:
     import llm
+
     return sorted(getattr(llm, "_PROVIDERS", {}) or [])
 
 
@@ -93,9 +111,13 @@ def set_model(backend: str, model: str | None = None) -> dict[str, str]:
     """Switch backend (and optionally model) for this process. Validates by
     constructing the provider; on failure nothing is changed."""
     from llm import get_provider
+
     backend = backend.strip().lower()
     attr = _MODEL_ATTRS.get(backend)
-    old = {"LLM_PROVIDER": cfg.LLM_PROVIDER, (attr or "AGENT_MODEL"): getattr(cfg, attr or "AGENT_MODEL", "")}
+    old = {
+        "LLM_PROVIDER": cfg.LLM_PROVIDER,
+        (attr or "AGENT_MODEL"): getattr(cfg, attr or "AGENT_MODEL", ""),
+    }
     try:
         cfg.LLM_PROVIDER = backend
         if model:

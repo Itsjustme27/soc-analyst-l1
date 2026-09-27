@@ -16,7 +16,9 @@ Each provider dict: {id, name, platform, source, enabled, config}.
 connector merges them over the matching `cfg.<PLATFORM>_*` env values, so a
 provider can point at any host/tenant without touching `.env`.
 """
+
 from __future__ import annotations
+
 import json
 import uuid
 from dataclasses import dataclass
@@ -24,7 +26,7 @@ from pathlib import Path
 from typing import Any
 
 from config import cfg
-from connectors.siem import SIEMConnector, SIEM_PLATFORMS, get_siem_connector
+from connectors.siem import SIEM_PLATFORMS, SIEMConnector, get_siem_connector
 
 
 @dataclass
@@ -46,30 +48,38 @@ def env_seeded_providers() -> list[dict[str, Any]]:
 
     def add(platform: str, name: str, required: tuple[str, ...]):
         if all(getattr(cfg, key) for key in required):
-            providers.append({
-                "id": f"env-{platform}",
-                "name": name,
-                "platform": platform,
-                "source": "env",
-                "enabled": True,
-                "config": {},
-            })
+            providers.append(
+                {
+                    "id": f"env-{platform}",
+                    "name": name,
+                    "platform": platform,
+                    "source": "env",
+                    "enabled": True,
+                    "config": {},
+                }
+            )
 
     add("splunk", "Splunk (env)", ("SPLUNK_HOST",))
     add("qradar", "IBM QRadar (env)", ("QRADAR_HOST",))
     add("elastic", "Elastic Security (env)", ("ELASTIC_HOST",))
-    add("sentinel", "Microsoft Sentinel (env)", ("SENTINEL_TENANT_ID", "SENTINEL_CLIENT_ID", "SENTINEL_WORKSPACE_ID"))
+    add(
+        "sentinel",
+        "Microsoft Sentinel (env)",
+        ("SENTINEL_TENANT_ID", "SENTINEL_CLIENT_ID", "SENTINEL_WORKSPACE_ID"),
+    )
     add("wazuh", "Wazuh (env)", ("WAZUH_HOST",))
 
     # The mock platform always works - zero credentials, useful for demos/tests.
-    providers.append({
-        "id": "env-mock",
-        "name": "Mock SIEM",
-        "platform": "mock",
-        "source": "env",
-        "enabled": True,
-        "config": {"alerts_file": cfg.MOCK_SIEM_ALERTS_FILE},
-    })
+    providers.append(
+        {
+            "id": "env-mock",
+            "name": "Mock SIEM",
+            "platform": "mock",
+            "source": "env",
+            "enabled": True,
+            "config": {"alerts_file": cfg.MOCK_SIEM_ALERTS_FILE},
+        }
+    )
     return providers
 
 
@@ -115,6 +125,7 @@ def redact_provider(provider: dict[str, Any]) -> dict[str, Any]:
     them to actually authenticate - so callers must redact explicitly at
     the point they hand a provider to something outside the process."""
     from connectors.siem import PLATFORM_FIELDS
+
     fields = (PLATFORM_FIELDS.get(provider.get("platform") or "") or {}).get("fields", [])
     secret_keys = {f["key"] for f in fields if f.get("secret")}
     if not secret_keys:

@@ -22,7 +22,9 @@ system (see dashboard.py's DASHBOARD_TOKEN docstring for why this project
 doesn't do full multi-user auth). Resolved in this order: --analyst NAME,
 then the ANALYST_NAME env var, then an interactive prompt (once per run).
 """
+
 from __future__ import annotations
+
 import argparse
 import json
 import os
@@ -39,7 +41,9 @@ REVIEWED_MARKER = Path("data/reviewed_case_ids.json")
 
 
 def _triage_log_path(path: str | Path | None = None) -> Path:
-    return Path(path) if path else Path(getattr(cfg, "TRIAGE_LOG_PATH", "") or "data/triage_log.jsonl")
+    return (
+        Path(path) if path else Path(getattr(cfg, "TRIAGE_LOG_PATH", "") or "data/triage_log.jsonl")
+    )
 
 
 def _load_reviewed() -> set[str]:
@@ -97,9 +101,14 @@ def review(analyst: str = ""):
             continue
         if answer == "y":
             analyst_verdict = result["verdict"]
-            reasoning = input("Optional note (enter to skip): ").strip() or "Analyst confirmed agent verdict."
+            reasoning = (
+                input("Optional note (enter to skip): ").strip()
+                or "Analyst confirmed agent verdict."
+            )
         else:
-            analyst_verdict = input("Correct verdict [false_positive/true_positive/escalate]: ").strip()
+            analyst_verdict = input(
+                "Correct verdict [false_positive/true_positive/escalate]: "
+            ).strip()
             reasoning = input("Why? (this becomes training signal - be specific): ").strip()
 
         store.capture_feedback(case_id, alert, result, analyst_verdict, reasoning, analyst=analyst)
@@ -128,7 +137,10 @@ def distill(analyst: str = ""):
         if approve == "y":
             store.approve_and_store_lesson(
                 c["lesson"],
-                {"supporting_case_ids": json.dumps(c.get("supporting_case_ids", [])), "added": time.time()},
+                {
+                    "supporting_case_ids": json.dumps(c.get("supporting_case_ids", [])),
+                    "added": time.time(),
+                },
                 approved_by=analyst,
             )
             print("Stored.")
@@ -139,9 +151,12 @@ def distill(analyst: str = ""):
 if __name__ == "__main__":
     parser = argparse.ArgumentParser(description="SOC analyst feedback loop")
     parser.add_argument("cmd", nargs="?", default="review", choices=["review", "distill"])
-    parser.add_argument("--analyst", default=None,
-                         help="Your name, recorded with every correction/approval (default: "
-                              "ANALYST_NAME env var, or an interactive prompt).")
+    parser.add_argument(
+        "--analyst",
+        default=None,
+        help="Your name, recorded with every correction/approval (default: "
+        "ANALYST_NAME env var, or an interactive prompt).",
+    )
     args = parser.parse_args()
 
     analyst_name = _resolve_analyst(args.analyst)

@@ -45,6 +45,7 @@ Rule dict shape:
 `evaluate_all(alert)` is the entry point main.py / run.py / dashboard.py
 call per alert - see their `rule_matches` wiring.
 """
+
 from __future__ import annotations
 
 import json
@@ -60,8 +61,20 @@ DEFAULT_PATH = Path("data/rules.json")
 DEFAULT_STATE_PATH = Path("data/rule_state.json")
 
 VALID_OPS = (
-    "eq", "neq", "contains", "not_contains", "in", "not_in",
-    "gt", "gte", "lt", "lte", "exists", "not_exists", "in_lookup", "regex",
+    "eq",
+    "neq",
+    "contains",
+    "not_contains",
+    "in",
+    "not_in",
+    "gt",
+    "gte",
+    "lt",
+    "lte",
+    "exists",
+    "not_exists",
+    "in_lookup",
+    "regex",
 )
 
 
@@ -111,16 +124,18 @@ def list_rules(path: str | Path | None = None) -> list[dict[str, Any]]:
     out = []
     for rid, r in rules.items():
         conditions = (r.get("match") or {}).get("conditions") or []
-        out.append({
-            "id": rid,
-            "name": r.get("name", rid),
-            "description": r.get("description", ""),
-            "enabled": bool(r.get("enabled", True)),
-            "condition_count": len(conditions),
-            "has_threshold": bool(r.get("threshold")),
-            "action": r.get("action", {}),
-            "updated": r.get("updated", ""),
-        })
+        out.append(
+            {
+                "id": rid,
+                "name": r.get("name", rid),
+                "description": r.get("description", ""),
+                "enabled": bool(r.get("enabled", True)),
+                "condition_count": len(conditions),
+                "has_threshold": bool(r.get("threshold")),
+                "action": r.get("action", {}),
+                "updated": r.get("updated", ""),
+            }
+        )
     return sorted(out, key=lambda r: r["name"])
 
 
@@ -191,7 +206,9 @@ def create_rule(payload: dict[str, Any], path: str | Path | None = None) -> dict
     return rule
 
 
-def update_rule(rule_id: str, payload: dict[str, Any], path: str | Path | None = None) -> dict[str, Any] | None:
+def update_rule(
+    rule_id: str, payload: dict[str, Any], path: str | Path | None = None
+) -> dict[str, Any] | None:
     """Partial update - only keys present in `payload` are changed."""
     file = _current_path(path)
     rules = _load(file)
@@ -236,11 +253,15 @@ def delete_rule(rule_id: str, path: str | Path | None = None) -> bool:
 _PORTABLE_KEYS = ("name", "description", "enabled", "match", "threshold", "action")
 
 
-def export_rules(rule_ids: list[str] | None = None, path: str | Path | None = None) -> list[dict[str, Any]]:
+def export_rules(
+    rule_ids: list[str] | None = None, path: str | Path | None = None
+) -> list[dict[str, Any]]:
     """Portable representation of some or all saved rules - no id/created/
     updated. `rule_ids=None` (default) exports everything."""
     rules = _load(_current_path(path))
-    selected = rules.values() if rule_ids is None else (rules[rid] for rid in rule_ids if rid in rules)
+    selected = (
+        rules.values() if rule_ids is None else (rules[rid] for rid in rule_ids if rid in rules)
+    )
     return [{k: r.get(k) for k in _PORTABLE_KEYS} for r in selected]
 
 
@@ -315,6 +336,7 @@ def _get_field(alert: dict[str, Any], field: str) -> Any:
     keeps rule conditions ergonomic without forcing analysts to write
     ``raw_fields.mfa_satisfied`` for every SIEM-specific field.
     """
+
     def _walk(obj: Any, parts: list[str]) -> Any:
         for p in parts:
             if isinstance(obj, dict) and p in obj:
@@ -357,6 +379,7 @@ def evaluate_condition(condition: dict[str, Any], alert: dict[str, Any]) -> bool
         # (see tests/test_rules.py's test_in_lookup) rather than trying to
         # redirect it - don't "fix" this into a path parameter.
         import lookup_tables as lookup
+
         if actual is None:
             return False
         return lookup.lookup_entry(str(expected), str(actual)) is not None
@@ -394,8 +417,11 @@ def evaluate_condition(condition: dict[str, Any], alert: dict[str, Any]) -> bool
     if actual is None and expected is not None:
         eq = False
     else:
-        eq = str(actual).lower() == str(expected).lower() if isinstance(expected, str) or isinstance(actual, str) \
+        eq = (
+            str(actual).lower() == str(expected).lower()
+            if isinstance(expected, str) or isinstance(actual, str)
             else actual == expected
+        )
     return eq if op == "eq" else not eq
 
 
@@ -482,7 +508,11 @@ def evaluate_rule(
     if state is None:
         state = {}
     threshold_met, count, group_value = _apply_threshold(
-        rule["id"], threshold, alert, state, now=now,
+        rule["id"],
+        threshold,
+        alert,
+        state,
+        now=now,
     )
     out["threshold_met"] = threshold_met
     out["count"] = count
@@ -546,14 +576,23 @@ def backtest_rule(
     shape ("this would have fired ~14 times across the last 200 alerts"),
     not to reproduce exact historical timing down to the second.
     """
-    path = Path(log_path) if log_path else Path(getattr(cfg, "TRIAGE_LOG_PATH", "") or "data/triage_log.jsonl")
+    path = (
+        Path(log_path)
+        if log_path
+        else Path(getattr(cfg, "TRIAGE_LOG_PATH", "") or "data/triage_log.jsonl")
+    )
     if not path.exists():
-        return {"total_alerts": 0, "matched": 0, "triggered": 0, "sample": [],
-                "note": f"No log file at {path} yet - run some triage first."}
+        return {
+            "total_alerts": 0,
+            "matched": 0,
+            "triggered": 0,
+            "sample": [],
+            "note": f"No log file at {path} yet - run some triage first.",
+        }
 
     lines = [l for l in path.read_text().splitlines() if l.strip()]
     if limit:
-        lines = lines[-int(limit):]  # most recent N entries
+        lines = lines[-int(limit) :]  # most recent N entries
 
     state: dict[str, dict[str, list[float]]] = {}
     now = 0.0
@@ -585,11 +624,13 @@ def backtest_rule(
         if result["triggered"]:
             triggered += 1
             if len(sample) < 10:
-                sample.append({
-                    "alert_id": alert.get("alert_id"),
-                    "ts": ts_str,
-                    "count": result.get("count"),
-                })
+                sample.append(
+                    {
+                        "alert_id": alert.get("alert_id"),
+                        "ts": ts_str,
+                        "count": result.get("count"),
+                    }
+                )
 
     return {
         "total_alerts": total,
@@ -613,14 +654,23 @@ if __name__ == "__main__":  # pragma: no cover - thin argparse wrapper
     exp.add_argument("--out", default=None, help="Output file (default: print to stdout).")
 
     imp = sub.add_parser("import", help="Import rules from a portable JSON file.")
-    imp.add_argument("file", help="JSON file - a bare list of rule dicts, or {\"rules\": [...]}.")
-    imp.add_argument("--overwrite", action="store_true",
-                      help="Update existing rules with the same name in place (default: skip conflicts).")
+    imp.add_argument("file", help='JSON file - a bare list of rule dicts, or {"rules": [...]}.')
+    imp.add_argument(
+        "--overwrite",
+        action="store_true",
+        help="Update existing rules with the same name in place (default: skip conflicts).",
+    )
 
-    bt = sub.add_parser("backtest", help="Backtest a saved rule against historical triage log entries.")
+    bt = sub.add_parser(
+        "backtest", help="Backtest a saved rule against historical triage log entries."
+    )
     bt.add_argument("rule_id", help="Rule id, e.g. rule-3c42ccde06 (see 'python rules.py list').")
-    bt.add_argument("--limit", type=int, default=None, help="Only look at the most recent N log entries.")
-    bt.add_argument("--log", default=None, help="Override the triage log path (default: cfg.TRIAGE_LOG_PATH).")
+    bt.add_argument(
+        "--limit", type=int, default=None, help="Only look at the most recent N log entries."
+    )
+    bt.add_argument(
+        "--log", default=None, help="Override the triage log path (default: cfg.TRIAGE_LOG_PATH)."
+    )
 
     args = parser.parse_args()
 
@@ -628,7 +678,9 @@ if __name__ == "__main__":  # pragma: no cover - thin argparse wrapper
         for r in list_rules():
             state = "enabled" if r["enabled"] else "disabled"
             thr = " [threshold]" if r["has_threshold"] else ""
-            print(f"  {r['id']}  {state:8s}  {r['name']}{thr}  ({r['condition_count']} condition(s))")
+            print(
+                f"  {r['id']}  {state:8s}  {r['name']}{thr}  ({r['condition_count']} condition(s))"
+            )
     elif args.cmd == "export":
         payload = {"rules": export_rules()}
         text = json.dumps(payload, indent=2)
@@ -638,7 +690,9 @@ if __name__ == "__main__":  # pragma: no cover - thin argparse wrapper
         else:
             print(text)
     elif args.cmd == "import":
-        result = import_rules_from_file(args.file, on_conflict="overwrite" if args.overwrite else "skip")
+        result = import_rules_from_file(
+            args.file, on_conflict="overwrite" if args.overwrite else "skip"
+        )
         print(f"Created:  {len(result['created'])}  {result['created']}")
         print(f"Updated:  {len(result['updated'])}  {result['updated']}")
         print(f"Skipped:  {len(result['skipped'])}  {result['skipped']}")

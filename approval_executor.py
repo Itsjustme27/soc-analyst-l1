@@ -16,9 +16,11 @@ indefinitely. Order of operations:
   6. approvals.finish_execution(): executing -> executed | failed
   7. audit the outcome either way
 """
+
 from __future__ import annotations
 
-from typing import Any, Callable
+from collections.abc import Callable
+from typing import Any
 
 import approvals
 import audit
@@ -40,17 +42,24 @@ def execute_proposal(
     if not p:
         return {"ok": False, "error": f"Proposal {proposal_id} not found.", "http_status": 404}
     if p.get("status") != "approved":
-        return {"ok": False, "http_status": 409,
-                "error": f"Proposal {proposal_id} is not approved (status: {p.get('status')})."}
+        return {
+            "ok": False,
+            "http_status": 409,
+            "error": f"Proposal {proposal_id} is not approved (status: {p.get('status')}).",
+        }
     action = p.get("action", "")
     if permissions.needs_confirmation(action, p.get("permission")) and not confirm:
-        return {"ok": False, "http_status": 400,
-                "error": "EXECUTE-level action: this requires an explicit confirmation "
-                         "on top of the approval."}
+        return {
+            "ok": False,
+            "http_status": 400,
+            "error": "EXECUTE-level action: this requires an explicit confirmation "
+            "on top of the approval.",
+        }
 
     try:
-        claimed = approvals.claim_for_execution(proposal_id, by, path=path,
-                                                identity_verified=identity_verified)
+        claimed = approvals.claim_for_execution(
+            proposal_id, by, path=path, identity_verified=identity_verified
+        )
     except (ValueError, KeyError) as e:
         return {"ok": False, "error": str(e), "http_status": 409}
 
@@ -58,6 +67,7 @@ def execute_proposal(
     ctx.approval = claimed  # gates the tool's approve_or_raise
 
     import tools.registry as registry  # attribute lookup at call time (mockable)
+
     error: str | None = None
     result: Any = None
     try:
@@ -73,12 +83,20 @@ def execute_proposal(
         pass  # record vanished/raced - the audit row below still captures the outcome
 
     audit.audit_log(
-        tool="approval_center", action="proposal_executed" if error is None else "proposal_execution_failed",
-        permission="human", approval_status="approved",
+        tool="approval_center",
+        action="proposal_executed" if error is None else "proposal_execution_failed",
+        permission="human",
+        approval_status="approved",
         execution_status="success" if error is None else "failed",
-        params={}, user=by, error=error,
-        result={"proposal_id": proposal_id, "tool": action, "by": by,
-                "identity_verified": identity_verified},
+        params={},
+        user=by,
+        error=error,
+        result={
+            "proposal_id": proposal_id,
+            "tool": action,
+            "by": by,
+            "identity_verified": identity_verified,
+        },
     )
     if error is not None:
         out = {"ok": False, "error": error, "http_status": 200}

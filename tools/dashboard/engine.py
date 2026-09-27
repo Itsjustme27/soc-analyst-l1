@@ -17,6 +17,7 @@ bundled stack) may be unreachable or configured differently - the engine never
 claims a dashboard was created unless the dashboards server returned the saved
 object. Dashboard creation is PROPOSE; deletion is EXECUTE.
 """
+
 from __future__ import annotations
 
 import json
@@ -48,7 +49,8 @@ def _find_index_pattern() -> str | None:
     to the conventional 'wazuh-alerts-*' id."""
     try:
         resp = dashboards_request(
-            "GET", "/api/saved_objects/_find",
+            "GET",
+            "/api/saved_objects/_find",
             params={"type": "index-pattern", "per_page": 50},
         )
     except Exception:  # noqa: BLE001 - best-effort discovery
@@ -107,9 +109,7 @@ def _agg_fields(vis_attrs: dict[str, Any]) -> set[str]:
     except (KeyError, TypeError, ValueError):
         return set()
     return {
-        field
-        for agg in vs.get("aggs") or []
-        if (field := (agg.get("params") or {}).get("field"))
+        field for agg in vs.get("aggs") or [] if (field := (agg.get("params") or {}).get("field"))
     }
 
 
@@ -135,8 +135,13 @@ def _panel_plan(focus: str, schema: dict[str, str]) -> list[dict[str, Any]]:
         return json.loads(json.dumps(base_query))
 
     metric_aggs = [
-        {"id": "1", "enabled": True, "type": "count", "schema": "metric",
-         "params": {"customLabel": "alerts (7d)"}},
+        {
+            "id": "1",
+            "enabled": True,
+            "type": "count",
+            "schema": "metric",
+            "params": {"customLabel": "alerts (7d)"},
+        },
     ]
     panels: list[dict[str, Any]] = [
         {
@@ -151,99 +156,199 @@ def _panel_plan(focus: str, schema: dict[str, str]) -> list[dict[str, Any]]:
             "title": "Alert trend (7d)",
             "vis_type": "line",
             "aggs": [
-                {"id": "1", "enabled": True, "type": "count", "schema": "metric",
-                 "params": {"customLabel": "alerts"}},
-                {"id": "2", "enabled": True, "type": "date_histogram", "schema": "segment",
-                 "params": {"field": "timestamp", "interval": "auto", "includeEmptyRows": True,
-                            "customLabel": "time"}},
+                {
+                    "id": "1",
+                    "enabled": True,
+                    "type": "count",
+                    "schema": "metric",
+                    "params": {"customLabel": "alerts"},
+                },
+                {
+                    "id": "2",
+                    "enabled": True,
+                    "type": "date_histogram",
+                    "schema": "segment",
+                    "params": {
+                        "field": "timestamp",
+                        "interval": "auto",
+                        "includeEmptyRows": True,
+                        "customLabel": "time",
+                    },
+                },
             ],
             "query": base_query,
         },
     ]
     if has_ip:
-        panels.append({
-            "slug": "top_src_ips",
-            "title": "Top source IPs",
-            "vis_type": "pie",
-            "aggs": [
-                {"id": "1", "enabled": True, "type": "count", "schema": "metric",
-                 "params": {"customLabel": "alerts"}},
-                {"id": "2", "enabled": True, "type": "terms", "schema": "segment",
-                 "params": {"field": "data.srcip", "size": 8, "order": "desc", "orderBy": "1",
-                            "customLabel": "source IP"}},
-            ],
-            "query": q(),
-        })
-    panels.extend([
-        {
-            "slug": "top_groups",
-            "title": "Top rule groups",
-            "vis_type": "bar",
-            "aggs": [
-                {"id": "1", "enabled": True, "type": "count", "schema": "metric",
-                 "params": {"customLabel": "alerts"}},
-                {"id": "2", "enabled": True, "type": "terms", "schema": "segment",
-                 "params": {"field": "rule.groups", "size": 6, "order": "desc", "orderBy": "1",
-                            "customLabel": "group"}},
-            ],
-            "query": q(),
-        },
-        {
-            "slug": "top_rules",
-            "title": "Top rules",
-            "vis_type": "bar",
-            "aggs": [
-                {"id": "1", "enabled": True, "type": "count", "schema": "metric",
-                 "params": {"customLabel": "alerts"}},
-                {"id": "2", "enabled": True, "type": "terms", "schema": "segment",
-                 "params": {"field": "rule.id", "size": 8, "order": "desc", "orderBy": "1",
-                            "customLabel": "rule id"}},
-            ],
-            "query": q(),
-        },
-        {
-            "slug": "level_dist",
-            "title": "Alert level distribution",
-            "vis_type": "bar",
-            "aggs": [
-                {"id": "1", "enabled": True, "type": "count", "schema": "metric",
-                 "params": {"customLabel": "alerts"}},
-                {"id": "2", "enabled": True, "type": "terms", "schema": "segment",
-                 "params": {"field": "rule.level", "size": 15, "order": "desc", "orderBy": "1",
-                            "customLabel": "level"}},
-            ],
-            "query": q(),
-        },
-    ])
+        panels.append(
+            {
+                "slug": "top_src_ips",
+                "title": "Top source IPs",
+                "vis_type": "pie",
+                "aggs": [
+                    {
+                        "id": "1",
+                        "enabled": True,
+                        "type": "count",
+                        "schema": "metric",
+                        "params": {"customLabel": "alerts"},
+                    },
+                    {
+                        "id": "2",
+                        "enabled": True,
+                        "type": "terms",
+                        "schema": "segment",
+                        "params": {
+                            "field": "data.srcip",
+                            "size": 8,
+                            "order": "desc",
+                            "orderBy": "1",
+                            "customLabel": "source IP",
+                        },
+                    },
+                ],
+                "query": q(),
+            }
+        )
+    panels.extend(
+        [
+            {
+                "slug": "top_groups",
+                "title": "Top rule groups",
+                "vis_type": "bar",
+                "aggs": [
+                    {
+                        "id": "1",
+                        "enabled": True,
+                        "type": "count",
+                        "schema": "metric",
+                        "params": {"customLabel": "alerts"},
+                    },
+                    {
+                        "id": "2",
+                        "enabled": True,
+                        "type": "terms",
+                        "schema": "segment",
+                        "params": {
+                            "field": "rule.groups",
+                            "size": 6,
+                            "order": "desc",
+                            "orderBy": "1",
+                            "customLabel": "group",
+                        },
+                    },
+                ],
+                "query": q(),
+            },
+            {
+                "slug": "top_rules",
+                "title": "Top rules",
+                "vis_type": "bar",
+                "aggs": [
+                    {
+                        "id": "1",
+                        "enabled": True,
+                        "type": "count",
+                        "schema": "metric",
+                        "params": {"customLabel": "alerts"},
+                    },
+                    {
+                        "id": "2",
+                        "enabled": True,
+                        "type": "terms",
+                        "schema": "segment",
+                        "params": {
+                            "field": "rule.id",
+                            "size": 8,
+                            "order": "desc",
+                            "orderBy": "1",
+                            "customLabel": "rule id",
+                        },
+                    },
+                ],
+                "query": q(),
+            },
+            {
+                "slug": "level_dist",
+                "title": "Alert level distribution",
+                "vis_type": "bar",
+                "aggs": [
+                    {
+                        "id": "1",
+                        "enabled": True,
+                        "type": "count",
+                        "schema": "metric",
+                        "params": {"customLabel": "alerts"},
+                    },
+                    {
+                        "id": "2",
+                        "enabled": True,
+                        "type": "terms",
+                        "schema": "segment",
+                        "params": {
+                            "field": "rule.level",
+                            "size": 15,
+                            "order": "desc",
+                            "orderBy": "1",
+                            "customLabel": "level",
+                        },
+                    },
+                ],
+                "query": q(),
+            },
+        ]
+    )
     if has_agent:
-        panels.append({
-            "slug": "top_agents",
-            "title": "Top agents",
-            "vis_type": "bar",
-            "aggs": [
-                {"id": "1", "enabled": True, "type": "count", "schema": "metric",
-                 "params": {"customLabel": "alerts"}},
-                {"id": "2", "enabled": True, "type": "terms", "schema": "segment",
-                 "params": {"field": "agent.name", "size": 6, "order": "desc", "orderBy": "1",
-                            "customLabel": "agent"}},
-            ],
-            "query": q(),
-        })
-    return panels[: _PANEL_LIMIT]
+        panels.append(
+            {
+                "slug": "top_agents",
+                "title": "Top agents",
+                "vis_type": "bar",
+                "aggs": [
+                    {
+                        "id": "1",
+                        "enabled": True,
+                        "type": "count",
+                        "schema": "metric",
+                        "params": {"customLabel": "alerts"},
+                    },
+                    {
+                        "id": "2",
+                        "enabled": True,
+                        "type": "terms",
+                        "schema": "segment",
+                        "params": {
+                            "field": "agent.name",
+                            "size": 6,
+                            "order": "desc",
+                            "orderBy": "1",
+                            "customLabel": "agent",
+                        },
+                    },
+                ],
+                "query": q(),
+            }
+        )
+    return panels[:_PANEL_LIMIT]
 
 
 # --------------------------------------------------------------------------- #
 class DesignDetectionDashboard(BaseWazuhTool):
     name = "design_detection_dashboard"
-    description = ("Dashboard engineering workflow: build a Wazuh-dashboard proposal (alert volume, "
-                   "trend, top source IPs, rule groups, rules, levels, agents) from the real indexer "
-                   "schema, verifying each panel's query actually matches data. Focus: web | ssh | "
-                   "network | general. WRITE on execute: creates the visualizations + dashboard on the "
-                   "Wazuh dashboard server (best-effort; requires human approval).")
+    description = (
+        "Dashboard engineering workflow: build a Wazuh-dashboard proposal (alert volume, "
+        "trend, top source IPs, rule groups, rules, levels, agents) from the real indexer "
+        "schema, verifying each panel's query actually matches data. Focus: web | ssh | "
+        "network | general. WRITE on execute: creates the visualizations + dashboard on the "
+        "Wazuh dashboard server (best-effort; requires human approval)."
+    )
     input_schema = {
         "type": "object",
         "properties": {
-            "title": {"type": "string", "description": "dashboard title, e.g. 'Web Server Attacks'" },
+            "title": {
+                "type": "string",
+                "description": "dashboard title, e.g. 'Web Server Attacks'",
+            },
             "focus": {"type": "string", "description": "web | ssh | network | general"},
             "description": {"type": "string"},
             "time_range": {"type": "string", "description": "verification window (default -7d)"},
@@ -270,12 +375,20 @@ class DesignDetectionDashboard(BaseWazuhTool):
         verified: list[dict[str, Any]] = []
         degraded: list[str] = []
         for panel in panels:
-            check = verify_opensearch_query(ctx.indexer, _INDEX, search_body(panel["query"], size=0))
+            check = verify_opensearch_query(
+                ctx.indexer, _INDEX, search_body(panel["query"], size=0)
+            )
             if not check.get("valid"):
                 degraded.append(panel["slug"])
                 check = {"valid": False, "error": check.get("error")}
-            verified.append({"slug": panel["slug"], "title": panel["title"], "matched": check.get("matched", 0),
-                             "note": check.get("error", "panel query verified")})
+            verified.append(
+                {
+                    "slug": panel["slug"],
+                    "title": panel["title"],
+                    "matched": check.get("matched", 0),
+                    "note": check.get("error", "panel query verified"),
+                }
+            )
 
         # 3) index pattern (best-effort discovery + best-effort metadata for
         #    field validation - a missing/unreachable dashboards server here
@@ -293,23 +406,42 @@ class DesignDetectionDashboard(BaseWazuhTool):
         vis_issues: list[str] = []
         for panel in panels:
             attrs, refs = osd.build_visualization_attributes(
-                panel["title"], panel["vis_type"], panel["aggs"], index_pattern,
+                panel["title"],
+                panel["vis_type"],
+                panel["aggs"],
+                index_pattern,
                 query=panel["query"],
                 description="Generated by the AI SOC engineer (verified against wazuh-alerts-*)",
             )
-            vis_obj = {"id": f"vis-{panel['slug']}", "type": "visualization", "version": 1,
-                      "attributes": attrs, "references": refs}
+            vis_obj = {
+                "id": f"vis-{panel['slug']}",
+                "type": "visualization",
+                "version": 1,
+                "attributes": attrs,
+                "references": refs,
+            }
             vis_issues.extend(osd.validate_visualization(vis_obj, design_known_fields))
-            visualizations.append({"slug": panel["slug"], "id": vis_obj["id"], "title": panel["title"],
-                                   "vis_type": panel["vis_type"], "obj": vis_obj})
+            visualizations.append(
+                {
+                    "slug": panel["slug"],
+                    "id": vis_obj["id"],
+                    "title": panel["title"],
+                    "vis_type": panel["vis_type"],
+                    "obj": vis_obj,
+                }
+            )
 
         panels_json, panel_refs = osd.build_panels([v["id"] for v in visualizations])
         dashboard_id = "dashboard-" + re.sub(r"[^a-z0-9]+", "-", p["title"].lower()).strip("-")
         dash_obj = {
-            "id": dashboard_id, "type": "dashboard", "version": 1,
+            "id": dashboard_id,
+            "type": "dashboard",
+            "version": 1,
             "attributes": osd.build_dashboard_attributes(
-                p["title"], p.get("description") or f"Wazuh {focus} alert dashboard over {index_pattern}",
-                panels_json),
+                p["title"],
+                p.get("description") or f"Wazuh {focus} alert dashboard over {index_pattern}",
+                panels_json,
+            ),
             "references": panel_refs,
         }
         dash_issues = osd.validate_dashboard(dash_obj)
@@ -322,33 +454,50 @@ class DesignDetectionDashboard(BaseWazuhTool):
             # only the server-confirmed ids. The payload is the tool's own input.
             "action": "design_detection_dashboard",
             "reason": p.get("reason", ""),
-            "payload": {k: p[k] for k in ("title", "focus", "description",
-                                          "time_range", "reason") if k in p},
+            "payload": {
+                k: p[k] for k in ("title", "focus", "description", "time_range", "reason") if k in p
+            },
             "permission": self.permission.value,
         }
         proposed["generated_config"] = {
             "title": p["title"],
             "focus": focus,
             "index_pattern": index_pattern,
-            "visualizations": [{"slug": v["slug"], "title": v["title"], "vis_type": v["vis_type"]}
-                               for v in visualizations],
+            "visualizations": [
+                {"slug": v["slug"], "title": v["title"], "vis_type": v["vis_type"]}
+                for v in visualizations
+            ],
             "panelsJSON": panels_json,
             # the importable, self-contained saved-object bundle (ids are the
             # vis-<slug> placeholders; execution remaps them to server ids).
             "saved_objects": saved_objects,
         }
-        errors = [f"panel '{d}' query failed: {next((v['note'] for v in verified if v['slug'] == d), '')}"
-                  for d in degraded] + vis_issues + dash_issues
+        errors = (
+            [
+                f"panel '{d}' query failed: {next((v['note'] for v in verified if v['slug'] == d), '')}"
+                for d in degraded
+            ]
+            + vis_issues
+            + dash_issues
+        )
         validated = not errors
         proposed["validation"] = {
             "valid": validated,
             "errors": errors or None,
-            "note": ("Queries verified against the real indexer; creation is best-effort on the "
-                     "dashboards server and will report the server-confirmed ids."),
-            "evidence": {"focus": focus, "index": _INDEX, "index_pattern": index_pattern,
-                         "panels": verified},
-            "next_steps": ["approve -> create visualizations + dashboard on the dashboards server",
-                           "open the dashboard in the Wazuh UI to confirm rendering"],
+            "note": (
+                "Queries verified against the real indexer; creation is best-effort on the "
+                "dashboards server and will report the server-confirmed ids."
+            ),
+            "evidence": {
+                "focus": focus,
+                "index": _INDEX,
+                "index_pattern": index_pattern,
+                "panels": verified,
+            },
+            "next_steps": [
+                "approve -> create visualizations + dashboard on the dashboards server",
+                "open the dashboard in the Wazuh UI to confirm rendering",
+            ],
         }
         ctx.approve_or_raise(proposed)
 
@@ -366,11 +515,14 @@ class DesignDetectionDashboard(BaseWazuhTool):
             )
         known_fields = osd.index_pattern_fields(idx_obj)
         if known_fields is not None:
-            missing = sorted({
-                field for v in visualizations
-                for field in _agg_fields(v["obj"]["attributes"])
-                if field not in known_fields
-            })
+            missing = sorted(
+                {
+                    field
+                    for v in visualizations
+                    for field in _agg_fields(v["obj"]["attributes"])
+                    if field not in known_fields
+                }
+            )
             if missing:
                 raise ToolError(
                     f"Index pattern '{index_pattern}' does not know about field(s) {missing} used "
@@ -383,8 +535,12 @@ class DesignDetectionDashboard(BaseWazuhTool):
         try:
             for v in visualizations:
                 resp = dashboards_request(
-                    "POST", "/api/saved_objects/visualization",
-                    body={"attributes": v["obj"]["attributes"], "references": v["obj"]["references"]},
+                    "POST",
+                    "/api/saved_objects/visualization",
+                    body={
+                        "attributes": v["obj"]["attributes"],
+                        "references": v["obj"]["references"],
+                    },
                 )
                 obj = resp.get("saved_object") or resp.get("object") or resp
                 vid = obj.get("id") or resp.get("id")
@@ -395,17 +551,21 @@ class DesignDetectionDashboard(BaseWazuhTool):
         real_panels_json, real_refs = osd.build_panels([v["id"] for v in created_vis])
         try:
             dash = dashboards_request(
-                "POST", "/api/saved_objects/dashboard",
+                "POST",
+                "/api/saved_objects/dashboard",
                 body={
                     "attributes": osd.build_dashboard_attributes(
-                        p["title"], p.get("description", ""), real_panels_json),
+                        p["title"], p.get("description", ""), real_panels_json
+                    ),
                     # panel references mirror the dashboard's own panelRefName
                     # entries so the panel ids resolve on import/export.
                     "references": real_refs,
                 },
             )
         except ToolError as e:
-            raise ToolError(f"Dashboard create failed after {len(created_vis)} visualizations: {e}") from e
+            raise ToolError(
+                f"Dashboard create failed after {len(created_vis)} visualizations: {e}"
+            ) from e
         dobj = dash.get("saved_object") or dash.get("object") or dash
         did = dobj.get("id") or dash.get("id")
 

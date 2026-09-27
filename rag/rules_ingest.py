@@ -16,6 +16,7 @@ The manager is NEVER modified by anything in this module - it only reads.
 Retrieval of these snapshots happens through the ordinary retrieve_wazuh_docs
 tool; the returned text is data, never instructions.
 """
+
 from __future__ import annotations
 
 from typing import Any
@@ -53,9 +54,7 @@ def build_rule_doc(rule: dict[str, Any]) -> str:
     lines: list[str] = []
     rid = rule.get("id")
     lvl = rule.get("level")
-    lines.append(
-        f"Wazuh rule {rid} (level {lvl}) - {rule.get('status') or 'enabled'}"
-    )
+    lines.append(f"Wazuh rule {rid} (level {lvl}) - {rule.get('status') or 'enabled'}")
     filename = rule.get("filename")
     if filename:
         lines.append(f"File: {filename}")
@@ -114,8 +113,11 @@ def ingest_wazuh_rules(
     while len(pulled) < max_rules:
         want = min(_PAGE, max_rules - len(pulled))
         resp = api.get_rules(
-            limit=want, offset=offset, search=search,
-            group=group, filename=filename_filter,
+            limit=want,
+            offset=offset,
+            search=search,
+            group=group,
+            filename=filename_filter,
         )
         data = (resp or {}).get("data", {}) or {}
         batch = data.get("affected_items", []) or []

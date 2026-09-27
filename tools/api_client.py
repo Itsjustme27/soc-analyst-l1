@@ -22,6 +22,7 @@ All methods raise WazuhAPIError on any non-2xx response; Wazuh's
 {"error": N, "message": "..."} payload (or its title/detail shape) is folded
 into the exception so callers can show the real reason to the user.
 """
+
 from __future__ import annotations
 
 import time
@@ -35,8 +36,9 @@ from config import cfg
 class WazuhAPIError(RuntimeError):
     """Any non-2xx / malformed response from the manager API."""
 
-    def __init__(self, message: str, status: int | None = None,
-                 code: Any = None, detail: Any = None):
+    def __init__(
+        self, message: str, status: int | None = None, code: Any = None, detail: Any = None
+    ):
         super().__init__(message)
         self.status = status
         self.code = code
@@ -149,8 +151,7 @@ class WazuhManagerAPI:
     def _authenticate(self) -> str:
         if not self.password:
             raise WazuhAPINotConfigured(
-                "WAZUH_API_PASSWORD is not set - cannot authenticate to the "
-                "manager API."
+                "WAZUH_API_PASSWORD is not set - cannot authenticate to the manager API."
             )
         try:
             r = self._session.post(
@@ -208,13 +209,23 @@ class WazuhManagerAPI:
             try:
                 if body_content_type == "application/json":
                     r = self._session.request(
-                        method, url, params=params, json=body, headers=headers,
-                        timeout=self.timeout, verify=self.verify,
+                        method,
+                        url,
+                        params=params,
+                        json=body,
+                        headers=headers,
+                        timeout=self.timeout,
+                        verify=self.verify,
                     )
                 else:
                     r = self._session.request(
-                        method, url, params=params, data=body, headers=headers,
-                        timeout=self.timeout, verify=self.verify,
+                        method,
+                        url,
+                        params=params,
+                        data=body,
+                        headers=headers,
+                        timeout=self.timeout,
+                        verify=self.verify,
                     )
             except requests.RequestException as e:
                 raise WazuhAPIError(f"Manager API request failed: {e}") from e
@@ -230,7 +241,8 @@ class WazuhManagerAPI:
                     _err_from_payload(payload, r.status_code),
                     status=r.status_code,
                     code=(payload or {}).get("error") if isinstance(payload, dict) else None,
-                    detail=(payload or {}).get("detail") or ((payload or {}).get("failed_items") if isinstance(payload, dict) else None),
+                    detail=(payload or {}).get("detail")
+                    or ((payload or {}).get("failed_items") if isinstance(payload, dict) else None),
                 )
             if raw_text:
                 return {"data": r.text}
@@ -243,17 +255,32 @@ class WazuhManagerAPI:
             return payload
         raise WazuhAuthError("Manager API authentication failed twice.")
 
-    def get(self, path: str, params: dict[str, Any] | None = None,
-        raw_text: bool = False) -> dict[str, Any]:
+    def get(
+        self, path: str, params: dict[str, Any] | None = None, raw_text: bool = False
+    ) -> dict[str, Any]:
         return self.request("GET", path, params=params, raw_text=raw_text)
 
-    def put(self, path: str, params: dict[str, Any] | None = None,
-            body: Any = None, body_content_type: str | None = None) -> dict[str, Any]:
-        return self.request("PUT", path, params=params, body=body, body_content_type=body_content_type)
+    def put(
+        self,
+        path: str,
+        params: dict[str, Any] | None = None,
+        body: Any = None,
+        body_content_type: str | None = None,
+    ) -> dict[str, Any]:
+        return self.request(
+            "PUT", path, params=params, body=body, body_content_type=body_content_type
+        )
 
-    def post(self, path: str, params: dict[str, Any] | None = None,
-             body: Any = None, body_content_type: str | None = None) -> dict[str, Any]:
-        return self.request("POST", path, params=params, body=body, body_content_type=body_content_type)
+    def post(
+        self,
+        path: str,
+        params: dict[str, Any] | None = None,
+        body: Any = None,
+        body_content_type: str | None = None,
+    ) -> dict[str, Any]:
+        return self.request(
+            "POST", path, params=params, body=body, body_content_type=body_content_type
+        )
 
     def delete(self, path: str, params: dict[str, Any] | None = None) -> dict[str, Any]:
         return self.request("DELETE", path, params=params)
@@ -261,14 +288,28 @@ class WazuhManagerAPI:
     # ------------------------------------------------------------------ #
     # rules
     # ------------------------------------------------------------------ #
-    def get_rules(self, limit: int = 50, offset: int = 0, search: str | None = None,
-                  group: str | None = None, level: int | None = None,
-                  filename: str | None = None, status: str | None = None,
-                  sort: str | None = None, q: str | None = None) -> dict[str, Any]:
+    def get_rules(
+        self,
+        limit: int = 50,
+        offset: int = 0,
+        search: str | None = None,
+        group: str | None = None,
+        level: int | None = None,
+        filename: str | None = None,
+        status: str | None = None,
+        sort: str | None = None,
+        q: str | None = None,
+    ) -> dict[str, Any]:
         params: dict[str, Any] = {"limit": limit, "offset": offset}
-        for key, val in (("search", search), ("group", group), ("level", level),
-                         ("filename", filename), ("status", status), ("sort", sort),
-                         ("q", q)):
+        for key, val in (
+            ("search", search),
+            ("group", group),
+            ("level", level),
+            ("filename", filename),
+            ("status", status),
+            ("sort", sort),
+            ("q", q),
+        ):
             if val is not None:
                 params[key] = val
         return self.get("/rules", params=params)
@@ -290,14 +331,23 @@ class WazuhManagerAPI:
         """POST /rules - NOT available on this API build (4.14 removed per-rule
         POST in favour of file management via put_rules_file). Kept for
         compatibility with builds that still expose it."""
-        resp = self.post("/rules", params={"overwrite": overwrite},
-                         body=rule_xml, body_content_type="application/xml")
+        resp = self.post(
+            "/rules",
+            params={"overwrite": overwrite},
+            body=rule_xml,
+            body_content_type="application/xml",
+        )
         return raise_for_inbody_error(resp, "Create rule")
 
-    def update_rule(self, rule_id: int | str, rule_xml: str,
-                    overwrite: bool = True, purge: bool = False) -> dict[str, Any]:
-        resp = self.put(f"/rules/{rule_id}", params={"overwrite": overwrite, "purge": purge},
-                        body=rule_xml, body_content_type="application/xml")
+    def update_rule(
+        self, rule_id: int | str, rule_xml: str, overwrite: bool = True, purge: bool = False
+    ) -> dict[str, Any]:
+        resp = self.put(
+            f"/rules/{rule_id}",
+            params={"overwrite": overwrite, "purge": purge},
+            body=rule_xml,
+            body_content_type="application/xml",
+        )
         return raise_for_inbody_error(resp, f"Update rule {rule_id}")
 
     def delete_rule(self, rule_id: int | str, purge: bool = False) -> dict[str, Any]:
@@ -312,19 +362,34 @@ class WazuhManagerAPI:
         return resp.get("data", {}).get("affected_items", [])
 
     def put_rules_file(self, filename: str, content: str, overwrite: bool = True) -> dict[str, Any]:
-        resp = self.put(f"/rules/files/{filename}", params={"overwrite": overwrite},
-                        body=content, body_content_type="application/octet-stream")
+        resp = self.put(
+            f"/rules/files/{filename}",
+            params={"overwrite": overwrite},
+            body=content,
+            body_content_type="application/octet-stream",
+        )
         return raise_for_inbody_error(resp, f"Upload of rules file '{filename}'")
 
     # ------------------------------------------------------------------ #
     # decoders
     # ------------------------------------------------------------------ #
-    def get_decoders(self, limit: int = 50, offset: int = 0, search: str | None = None,
-                     filename: str | None = None, status: str | None = None,
-                     parents: bool = False, sort: str | None = None) -> dict[str, Any]:
+    def get_decoders(
+        self,
+        limit: int = 50,
+        offset: int = 0,
+        search: str | None = None,
+        filename: str | None = None,
+        status: str | None = None,
+        parents: bool = False,
+        sort: str | None = None,
+    ) -> dict[str, Any]:
         params: dict[str, Any] = {"limit": limit, "offset": offset, "parents": parents}
-        for key, val in (("search", search), ("filename", filename),
-                         ("status", status), ("sort", sort)):
+        for key, val in (
+            ("search", search),
+            ("filename", filename),
+            ("status", status),
+            ("sort", sort),
+        ):
             if val is not None:
                 params[key] = val
         return self.get("/decoders", params=params)
@@ -334,22 +399,42 @@ class WazuhManagerAPI:
         resp = self.get(f"/decoders/files/{filename}", params={"raw": raw}, raw_text=raw)
         return str(resp.get("data", "")) if raw else resp.get("data", {}).get("affected_items", [])
 
-    def put_decoders_file(self, filename: str, content: str, overwrite: bool = True) -> dict[str, Any]:
-        resp = self.put(f"/decoders/files/{filename}", params={"overwrite": overwrite},
-                        body=content, body_content_type="application/octet-stream")
+    def put_decoders_file(
+        self, filename: str, content: str, overwrite: bool = True
+    ) -> dict[str, Any]:
+        resp = self.put(
+            f"/decoders/files/{filename}",
+            params={"overwrite": overwrite},
+            body=content,
+            body_content_type="application/octet-stream",
+        )
         return raise_for_inbody_error(resp, f"Upload of decoders file '{filename}'")
 
     # ------------------------------------------------------------------ #
     # agents
     # ------------------------------------------------------------------ #
-    def get_agents(self, limit: int = 50, offset: int = 0, search: str | None = None,
-                   status: str | None = None, group: str | None = None,
-                   platform: str | None = None, version: str | None = None,
-                   agents_list: str | None = None, select: str | None = None) -> dict[str, Any]:
+    def get_agents(
+        self,
+        limit: int = 50,
+        offset: int = 0,
+        search: str | None = None,
+        status: str | None = None,
+        group: str | None = None,
+        platform: str | None = None,
+        version: str | None = None,
+        agents_list: str | None = None,
+        select: str | None = None,
+    ) -> dict[str, Any]:
         params: dict[str, Any] = {"limit": limit, "offset": offset}
-        for key, val in (("search", search), ("status", status), ("group", group),
-                         ("platform", platform), ("version", version),
-                         ("agents_list", agents_list), ("select", select)):
+        for key, val in (
+            ("search", search),
+            ("status", status),
+            ("group", group),
+            ("platform", platform),
+            ("version", version),
+            ("agents_list", agents_list),
+            ("select", select),
+        ):
             if val is not None:
                 params[key] = val
         return self.get("/agents", params=params)
@@ -368,8 +453,9 @@ class WazuhManagerAPI:
     def get_cluster_status(self) -> dict[str, Any]:
         return self.get("/cluster/status")
 
-    def get_manager_configuration(self, section: str, field: str | None = None,
-                                  component: str | None = None) -> dict[str, Any]:
+    def get_manager_configuration(
+        self, section: str, field: str | None = None, component: str | None = None
+    ) -> dict[str, Any]:
         params: dict[str, Any] = {"section": section}
         if field:
             params["field"] = field
@@ -382,14 +468,18 @@ class WazuhManagerAPI:
         # a refused restart with HTTP 200 and error:1 in the body, which used to
         # be reported as a successful restart. A restart is exactly when you
         # need to know it did not happen.
-        return raise_for_inbody_error(self.put("/manager/restart"),
-                                      "Manager restart")
+        return raise_for_inbody_error(self.put("/manager/restart"), "Manager restart")
 
     # ------------------------------------------------------------------ #
     # logtest (rule/decoder testing on the manager)
     # ------------------------------------------------------------------ #
-    def run_logtest(self, log: str, log_format: str | None = None,
-                    location: str | None = None, token: str | None = None) -> dict[str, Any]:
+    def run_logtest(
+        self,
+        log: str,
+        log_format: str | None = None,
+        location: str | None = None,
+        token: str | None = None,
+    ) -> dict[str, Any]:
         """PUT /logtest. Wazuh 4.7+ calls the payload field `event`;
         `log_format`/`location` are required. Tests the *deployed* ruleset -
         for candidate rules the detection engine validates statically first,

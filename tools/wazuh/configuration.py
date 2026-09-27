@@ -1,6 +1,7 @@
 """
 Wazuh manager configuration tools (read-only).
 """
+
 from __future__ import annotations
 
 from typing import Any
@@ -10,13 +11,18 @@ from tools.base import BaseWazuhTool, Permission, ToolContext, ToolError
 
 class GetWazuhConfiguration(BaseWazuhTool):
     name = "get_wazuh_configuration"
-    description = ("Read the Wazuh manager's effective configuration for a section "
-                   "(e.g. global, ruleset, syscheck, wodle). Useful before proposing config changes "
-                   "or explaining why an agent/report behaves as it does.")
+    description = (
+        "Read the Wazuh manager's effective configuration for a section "
+        "(e.g. global, ruleset, syscheck, wodle). Useful before proposing config changes "
+        "or explaining why an agent/report behaves as it does."
+    )
     input_schema = {
         "type": "object",
         "properties": {
-            "section": {"type": "string", "description": "config section, e.g. global, ruleset, syscheck"},
+            "section": {
+                "type": "string",
+                "description": "config section, e.g. global, ruleset, syscheck",
+            },
             "field": {"type": "string", "description": "narrow to one field of the section"},
         },
         "required": ["section"],

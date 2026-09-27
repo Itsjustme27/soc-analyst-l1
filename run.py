@@ -37,6 +37,7 @@ The watcher writes its heartbeat *every* poll cycle (even when there are no
 alerts) plus an initial "starting" heartbeat on boot, so the dashboard always
 knows it is alive and can signal it - an idle SIEM must not look "stopped".
 """
+
 from __future__ import annotations
 
 import argparse
@@ -48,14 +49,13 @@ import time
 from pathlib import Path
 from typing import Any
 
+import agent_control as ac
+import notify
+import rules
+from agent.triage_agent import TriageAgent, needs_human_review
 from config import cfg
 from llm import get_provider
-from agent.triage_agent import TriageAgent, needs_human_review
 from siem_providers import connector_for, load_providers, resolve_connector
-import agent_control as ac
-import rules
-import notify
-
 
 AGENT_ID = "default"
 _CYCLES_DONE = 0
@@ -110,13 +110,15 @@ def _run_cycle(siem, *, cycle: int, exit_after: int) -> bool:
             print("  [run] No alerts in the first poll - watching...")
         # Heartbeat EVERY cycle, even with nothing to triage - this is how the
         # dashboard knows the watcher is alive and enables its Stop button.
-        write_heartbeat({
-            "status": "running",
-            "at": time.strftime("%Y-%m-%dT%H:%M:%S"),
-            "cycle": cycle,
-            "triaged_this_cycle": 0,
-            "alerts_seen": 0,
-        })
+        write_heartbeat(
+            {
+                "status": "running",
+                "at": time.strftime("%Y-%m-%dT%H:%M:%S"),
+                "cycle": cycle,
+                "triaged_this_cycle": 0,
+                "alerts_seen": 0,
+            }
+        )
         return False
 
     agent = TriageAgent(siem=siem)
@@ -138,8 +140,10 @@ def _run_cycle(siem, *, cycle: int, exit_after: int) -> bool:
             rule_matches = []
         triggered = [m for m in rule_matches if m["triggered"]]
         if triggered:
-            print(f"  [run] cycle {cycle}: {alert.get('alert_id')} matched rule(s): "
-                  f"{', '.join(m['name'] for m in triggered)}")
+            print(
+                f"  [run] cycle {cycle}: {alert.get('alert_id')} matched rule(s): "
+                f"{', '.join(m['name'] for m in triggered)}"
+            )
             try:
                 notify.notify_rule_matches(alert, rule_matches)
             except Exception as e:  # noqa: BLE001 - a bad webhook must never kill the watch
@@ -154,7 +158,9 @@ def _run_cycle(siem, *, cycle: int, exit_after: int) -> bool:
             "ts": time.strftime("%Y-%m-%dT%H:%M:%S"),
             "provider": (siem.name if siem is not None else "none"),
             "alert_id": alert.get("alert_id"),
-            "result": result.to_dict() if hasattr(result, "to_dict") else {
+            "result": result.to_dict()
+            if hasattr(result, "to_dict")
+            else {
                 "verdict": result.verdict,
                 "confidence": result.confidence,
                 "recommended_action": result.recommended_action,
@@ -168,16 +174,20 @@ def _run_cycle(siem, *, cycle: int, exit_after: int) -> bool:
         with log.open("a") as f:
             f.write(json.dumps(entry, default=str) + "\n")
         triaged += 1
-        print(f"  [run] cycle {cycle}: {alert.get('alert_id')} -> "
-              f"{result.verdict} ({result.confidence:.2f})")
+        print(
+            f"  [run] cycle {cycle}: {alert.get('alert_id')} -> "
+            f"{result.verdict} ({result.confidence:.2f})"
+        )
 
-    write_heartbeat({
-        "status": "running",
-        "at": time.strftime("%Y-%m-%dT%H:%M:%S"),
-        "cycle": cycle,
-        "triaged_this_cycle": triaged,
-        "alerts_seen": len(alerts),
-    })
+    write_heartbeat(
+        {
+            "status": "running",
+            "at": time.strftime("%Y-%m-%dT%H:%M:%S"),
+            "cycle": cycle,
+            "triaged_this_cycle": triaged,
+            "alerts_seen": len(alerts),
+        }
+    )
     if exit_after and cycle >= exit_after:
         print(f"  [run] reached --exit-after {exit_after} cycles; stopping.")
         return True
@@ -200,20 +210,26 @@ def run_watch(*, siem, interval: float, exit_after: int) -> int:
 
     # Initial heartbeat so the dashboard sees a live pid immediately, even
     # before the first poll cycle finishes.
-    write_heartbeat({
-        "status": "starting",
-        "at": time.strftime("%Y-%m-%dT%H:%M:%S"),
-        "cycle": 0,
-        "alerts_seen": 0,
-        "triaged_this_cycle": 0,
-        "reason": "started",
-    })
+    write_heartbeat(
+        {
+            "status": "starting",
+            "at": time.strftime("%Y-%m-%dT%H:%M:%S"),
+            "cycle": 0,
+            "alerts_seen": 0,
+            "triaged_this_cycle": 0,
+            "reason": "started",
+        }
+    )
 
     print("=" * 66)
-    print(f" SOC overnight watcher · agent={AGENT_ID or 'default'} "
-          f"siem={siem.name if siem is not None else 'none'}")
-    print(f" LLM={cfg.LLM_PROVIDER} · retries={cfg.LLM_MAX_RETRIES} "
-          f"(backoff {cfg.LLM_RETRY_BACKOFF_BASE}s)")
+    print(
+        f" SOC overnight watcher · agent={AGENT_ID or 'default'} "
+        f"siem={siem.name if siem is not None else 'none'}"
+    )
+    print(
+        f" LLM={cfg.LLM_PROVIDER} · retries={cfg.LLM_MAX_RETRIES} "
+        f"(backoff {cfg.LLM_RETRY_BACKOFF_BASE}s)"
+    )
     print(f" interval={interval}s · exit_after={exit_after or 'forever'}")
     print(f" stop-file: {stop}   (create this file to stop from the dashboard)")
     print(f" audit:     {cfg.TRIAGE_LOG_PATH}")
@@ -247,20 +263,37 @@ def run_watch(*, siem, interval: float, exit_after: int) -> int:
 # --------------------------------------------------------------------------- #
 def main() -> int:  # pragma: no cover - thin argparse wrapper
     parser = argparse.ArgumentParser(description="SOC triage agent - overnight watcher")
-    parser.add_argument("--siem", default=None,
-                        help="SIEM provider id from the dashboard store, or a "
-                             "platform name to build from env creds (default: "
-                             "resolve_connector(None) -> env-seeded Wazuh/mock).")
-    parser.add_argument("--provider", default=None,
-                        help="LLM provider override: anthropic|openai|google|mock|freellmapi")
-    parser.add_argument("--agent-id", default="default",
-                        help="watcher id (dashboard spawns named watchers; state and "
-                             "logs live under data/agents/<id>/ - 'default' keeps the "
-                             "legacy data/agent_* paths)")
-    parser.add_argument("--interval", type=float, default=cfg.AGENT_POLL_INTERVAL,
-                        help="seconds between polls (default: AGENT_POLL_INTERVAL)")
-    parser.add_argument("--exit-after", type=int, default=0,
-                        help="stop cleanly after N poll cycles (0 = run forever)")
+    parser.add_argument(
+        "--siem",
+        default=None,
+        help="SIEM provider id from the dashboard store, or a "
+        "platform name to build from env creds (default: "
+        "resolve_connector(None) -> env-seeded Wazuh/mock).",
+    )
+    parser.add_argument(
+        "--provider",
+        default=None,
+        help="LLM provider override: anthropic|openai|google|mock|freellmapi",
+    )
+    parser.add_argument(
+        "--agent-id",
+        default="default",
+        help="watcher id (dashboard spawns named watchers; state and "
+        "logs live under data/agents/<id>/ - 'default' keeps the "
+        "legacy data/agent_* paths)",
+    )
+    parser.add_argument(
+        "--interval",
+        type=float,
+        default=cfg.AGENT_POLL_INTERVAL,
+        help="seconds between polls (default: AGENT_POLL_INTERVAL)",
+    )
+    parser.add_argument(
+        "--exit-after",
+        type=int,
+        default=0,
+        help="stop cleanly after N poll cycles (0 = run forever)",
+    )
     args = parser.parse_args()
 
     global AGENT_ID

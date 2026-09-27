@@ -19,6 +19,7 @@ The agent must finish by calling `answer_user` with a natural-language reply +
 any structured data it gathered. Every tool call and result is kept in the
 transcript, which the dashboard stores per-chat for the audit trail.
 """
+
 from __future__ import annotations
 
 import json
@@ -26,17 +27,23 @@ from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any
 
+import lookup_tables as lookup
 from config import cfg
-from llm import get_provider
 from connectors.siem import SIEMConnector
+from llm import get_provider
 from siem_providers import (
-    connector_for,
-    get_provider as store_get_provider,
-    load_providers,
-    remove_provider as store_remove_provider,
     add_provider as store_add_provider,
 )
-import lookup_tables as lookup
+from siem_providers import (
+    connector_for,
+    load_providers,
+)
+from siem_providers import (
+    get_provider as store_get_provider,
+)
+from siem_providers import (
+    remove_provider as store_remove_provider,
+)
 
 MAX_TOOL_TURNS = cfg.LLM_MAX_TOOL_TURNS
 
@@ -81,8 +88,14 @@ TOOLS: list[dict[str, Any]] = [
         "input_schema": {
             "type": "object",
             "properties": {
-                "provider_id": {"type": "string", "description": "provider id (optional, defaults to the active provider)"},
-                "severity": {"type": "string", "description": "optional filter: low|medium|high|critical"},
+                "provider_id": {
+                    "type": "string",
+                    "description": "provider id (optional, defaults to the active provider)",
+                },
+                "severity": {
+                    "type": "string",
+                    "description": "optional filter: low|medium|high|critical",
+                },
                 "host": {"type": "string", "description": "optional filter by host"},
             },
         },
@@ -176,7 +189,10 @@ TOOLS: list[dict[str, Any]] = [
             "type": "object",
             "properties": {
                 "name": {"type": "string"},
-                "query": {"type": "string", "description": "optional substring filter across keys+values"},
+                "query": {
+                    "type": "string",
+                    "description": "optional substring filter across keys+values",
+                },
             },
             "required": ["name"],
         },
@@ -214,7 +230,10 @@ TOOLS: list[dict[str, Any]] = [
             "type": "object",
             "properties": {
                 "answer": {"type": "string"},
-                "data": {"type": "object", "description": "optional structured data (e.g. alerts, table rows, enrichment)"},
+                "data": {
+                    "type": "object",
+                    "description": "optional structured data (e.g. alerts, table rows, enrichment)",
+                },
             },
             "required": ["answer"],
         },
@@ -281,13 +300,15 @@ class ChatAgent:
                 except json.JSONDecodeError:
                     continue
                 result = row.get("result") or {}
-                verdicts.append({
-                    "at": (row.get("ts") or ""),
-                    "verdict": result.get("verdict"),
-                    "confidence": result.get("confidence"),
-                    "recommended_action": result.get("recommended_action"),
-                    "rationale": (result.get("rationale") or "")[:400],
-                })
+                verdicts.append(
+                    {
+                        "at": (row.get("ts") or ""),
+                        "verdict": result.get("verdict"),
+                        "confidence": result.get("confidence"),
+                        "recommended_action": result.get("recommended_action"),
+                        "rationale": (result.get("rationale") or "")[:400],
+                    }
+                )
         out["triage_verdicts"] = verdicts
         # 2) Current alert doc shape from the SIEM, if we can find it
         if self.siem is not None:
@@ -299,7 +320,9 @@ class ChatAgent:
             except Exception as e:  # noqa: BLE001 - SIEM down shouldn't block an answer
                 out["siem_error"] = str(e)
         if not verdicts and "current" not in out:
-            out["note"] = "No triage verdict and no matching alert found in the current pull window."
+            out["note"] = (
+                "No triage verdict and no matching alert found in the current pull window."
+            )
         return out
 
     def _get_alerts(self, tool_input: dict[str, Any]) -> Any:
@@ -331,28 +354,46 @@ class ChatAgent:
             )
         except Exception as e:  # noqa: BLE001
             return {"error": f"Failed to search user events: {e}"}
-        return {"user": tool_input.get("user"), "host": tool_input.get("host"), "events": events or [], "event_count": len(events or [])}
+        return {
+            "user": tool_input.get("user"),
+            "host": tool_input.get("host"),
+            "events": events or [],
+            "event_count": len(events or []),
+        }
 
     def _providers(self, name: str, tool_input: dict[str, Any]) -> Any:
         if name == "list_providers":
             return [
-                {"id": p.get("id"), "name": p.get("name"), "platform": p.get("platform"), "source": p.get("source"), "enabled": p.get("enabled")}
+                {
+                    "id": p.get("id"),
+                    "name": p.get("name"),
+                    "platform": p.get("platform"),
+                    "source": p.get("source"),
+                    "enabled": p.get("enabled"),
+                }
                 for p in load_providers()
             ]
         if name == "add_provider":
             config = tool_input.get("config") or {}
             try:
-                provider = store_add_provider({
-                    "name": tool_input.get("name", ""),
-                    "platform": tool_input.get("platform", ""),
-                    "config": config,
-                })
+                provider = store_add_provider(
+                    {
+                        "name": tool_input.get("name", ""),
+                        "platform": tool_input.get("platform", ""),
+                        "config": config,
+                    }
+                )
             except Exception as e:  # noqa: BLE001 - validation error -> plain message
                 return {"error": str(e)}
             return {"added": True, "id": provider.get("id"), "platform": provider.get("platform")}
         if name == "remove_provider":
             ok = store_remove_provider(tool_input.get("provider_id", ""))
-            return {"removed": ok, "note": "Provider deleted." if ok else "Provider not found or it is env-seeded (cannot delete via chat)."}
+            return {
+                "removed": ok,
+                "note": "Provider deleted."
+                if ok
+                else "Provider not found or it is env-seeded (cannot delete via chat).",
+            }
         # test_provider
         provider = store_get_provider(tool_input.get("provider_id", ""))
         if not provider:
@@ -372,11 +413,20 @@ class ChatAgent:
             return {"error": "No SIEM connection available in this chat - cannot write back."}
         try:
             if action == "close":
-                self.siem.close_notable(event_id=alert_id, status=status or "closed", comment=comment)
-                return {"updated": True, "action": "close", "alert_id": alert_id, "status": status or "closed"}
+                self.siem.close_notable(
+                    event_id=alert_id, status=status or "closed", comment=comment
+                )
+                return {
+                    "updated": True,
+                    "action": "close",
+                    "alert_id": alert_id,
+                    "status": status or "closed",
+                }
             # annotate == a close_notable write with the existing/default status so
             # connectors that only support one write path can still persist notes.
-            self.siem.close_notable(event_id=alert_id, status=status or "annotated", comment=f"ANNOTATION: {comment}")
+            self.siem.close_notable(
+                event_id=alert_id, status=status or "annotated", comment=f"ANNOTATION: {comment}"
+            )
             return {"updated": True, "action": "annotate", "alert_id": alert_id}
         except Exception as e:  # noqa: BLE001 - SIEM write failure shouldn't crash the chat
             return {"error": f"Write failed: {e}", "action": action, "alert_id": alert_id}
@@ -399,7 +449,13 @@ class ChatAgent:
             return {"error": "`key` is required for upsert."}
         try:
             table = lookup.upsert_lookup_entry(name, key, tool_input.get("value") or {}, path=None)
-            return {"updated": True, "action": "upsert", "name": name, "key": key, "entry_count": len((table.get("entries") or {}))}
+            return {
+                "updated": True,
+                "action": "upsert",
+                "name": name,
+                "key": key,
+                "entry_count": len(table.get("entries") or {}),
+            }
         except Exception as e:  # noqa: BLE001
             return {"error": f"Upsert failed: {e}"}
 
@@ -426,12 +482,24 @@ class ChatAgent:
                     return ChatResult(reply=resp.content, transcript=transcript)
                 messages.append({"role": "assistant", "content": resp.content or ""})
                 continue
-            transcript.append({"assistant": resp.content or "", "tool_calls": [{"name": tc.name, "input": _tool_input(tc)} for tc in resp.tool_calls]})
-            messages.append({
-                "role": "assistant",
-                "content": resp.content,
-                "tool_calls": [{"id": tc.id, "name": tc.name, "input": _tool_input(tc)} for tc in resp.tool_calls],
-            })
+            transcript.append(
+                {
+                    "assistant": resp.content or "",
+                    "tool_calls": [
+                        {"name": tc.name, "input": _tool_input(tc)} for tc in resp.tool_calls
+                    ],
+                }
+            )
+            messages.append(
+                {
+                    "role": "assistant",
+                    "content": resp.content,
+                    "tool_calls": [
+                        {"id": tc.id, "name": tc.name, "input": _tool_input(tc)}
+                        for tc in resp.tool_calls
+                    ],
+                }
+            )
             tool_results = []
             for tc in resp.tool_calls:
                 tool_input = _tool_input(tc)
@@ -445,7 +513,13 @@ class ChatAgent:
                     result = self._execute_tool(tc.name, tool_input)
                 except Exception as e:  # noqa: BLE001 - never let a tool crash the loop
                     result = {"error": str(e)}
-                tool_results.append({"role": "tool", "tool_call_id": tc.id, "content": json.dumps(result, default=str)})
+                tool_results.append(
+                    {
+                        "role": "tool",
+                        "tool_call_id": tc.id,
+                        "content": json.dumps(result, default=str),
+                    }
+                )
             messages.extend(tool_results)
 
         return ChatResult(
@@ -469,14 +543,32 @@ def _ddg_instant(query: str) -> list[dict[str, Any]]:
     data = r.json()
     out = []
     if data.get("AbstractText"):
-        out.append({"title": "Instant answer", "snippet": data["AbstractText"], "url": data.get("AbstractURL", "")})
+        out.append(
+            {
+                "title": "Instant answer",
+                "snippet": data["AbstractText"],
+                "url": data.get("AbstractURL", ""),
+            }
+        )
     for t in data.get("RelatedTopics") or []:
         if isinstance(t, dict) and t.get("Text"):
-            out.append({"title": t.get("Text", "")[:80], "snippet": t.get("Text", ""), "url": t.get("FirstURL", "")})
+            out.append(
+                {
+                    "title": t.get("Text", "")[:80],
+                    "snippet": t.get("Text", ""),
+                    "url": t.get("FirstURL", ""),
+                }
+            )
         elif isinstance(t, dict) and t.get("Topics"):
             for s in t["Topics"]:
                 if s.get("Text"):
-                    out.append({"title": s.get("Text", "")[:80], "snippet": s.get("Text", ""), "url": s.get("FirstURL", "")})
+                    out.append(
+                        {
+                            "title": s.get("Text", "")[:80],
+                            "snippet": s.get("Text", ""),
+                            "url": s.get("FirstURL", ""),
+                        }
+                    )
     return out[:10]
 
 
@@ -498,7 +590,11 @@ def _searxng(query: str) -> list[dict[str, Any]]:
         return []
     results = r.json().get("results") or []
     return [
-        {"title": (x.get("title") or "")[:120], "snippet": (x.get("content") or "")[:300], "url": x.get("url", "")}
+        {
+            "title": (x.get("title") or "")[:120],
+            "snippet": (x.get("content") or "")[:300],
+            "url": x.get("url", ""),
+        }
         for x in results[:8]
     ]
 
@@ -506,10 +602,20 @@ def _searxng(query: str) -> list[dict[str, Any]]:
 def web_search(query: str) -> dict[str, Any]:
     """OSINT web search. DuckDuckGo instant-answer first; SearXNG when configured."""
     if not cfg.WEB_SEARCH_ENABLED:
-        return {"enabled": False, "note": "Web search is disabled (WEB_SEARCH_ENABLED=false).", "results": []}
+        return {
+            "enabled": False,
+            "note": "Web search is disabled (WEB_SEARCH_ENABLED=false).",
+            "results": [],
+        }
     results = _ddg_instant(query)
     backend = "duckduckgo"
     if not results:
         results = _searxng(query)
         backend = "searxng"
-    return {"enabled": True, "backend": backend, "query": query, "count": len(results), "results": results}
+    return {
+        "enabled": True,
+        "backend": backend,
+        "query": query,
+        "count": len(results),
+        "results": results,
+    }

@@ -8,11 +8,12 @@ also runs live without approval). It never modifies Wazuh configuration, so it
 needs no proposal. Re-runs are idempotent - upsert by rule id - and
 delete_missing keeps the corpus in sync as rules come and go on the manager.
 """
+
 from __future__ import annotations
 
 from typing import Any
 
-from tools.base import BaseWazuhTool, Permission, ToolError, ToolContext
+from tools.base import BaseWazuhTool, Permission, ToolContext, ToolError
 
 MAX_RULES_LIMIT = 5000
 
@@ -34,14 +35,14 @@ class IngestWazuhRules(BaseWazuhTool):
             "filename": {
                 "type": "string",
                 "description": "Ruleset file to snapshot, e.g. 'local_rules.xml' "
-                               "(default). Use 'all' / 'all-rules' to snapshot "
-                               "the entire ruleset.",
+                "(default). Use 'all' / 'all-rules' to snapshot "
+                "the entire ruleset.",
             },
             "all_rules": {
                 "type": "boolean",
                 "description": "Snapshot the ENTIRE ruleset from the manager "
-                               "(equivalent to filename='all'). Default false = "
-                               "only the custom local_rules.xml.",
+                "(equivalent to filename='all'). Default false = "
+                "only the custom local_rules.xml.",
             },
             "group": {
                 "type": "string",
@@ -50,17 +51,17 @@ class IngestWazuhRules(BaseWazuhTool):
             "search": {
                 "type": "string",
                 "description": "Only snapshot rules matching this search term "
-                               "(rule id or description substring).",
+                "(rule id or description substring).",
             },
             "max_rules": {
                 "type": "integer",
                 "description": f"Cap on how many rules to store per call "
-                               f"(default 2000, max {MAX_RULES_LIMIT}).",
+                f"(default 2000, max {MAX_RULES_LIMIT}).",
             },
             "delete_missing": {
                 "type": "boolean",
                 "description": "Prune previously-synced snapshots that no "
-                               "longer exist for this selection (default true).",
+                "longer exist for this selection (default true).",
             },
         },
         "required": [],
@@ -81,8 +82,8 @@ class IngestWazuhRules(BaseWazuhTool):
 
         # Imported lazily so listing/importing the tool never touches disk or
         # chroma (same pattern as retrieve_wazuh_docs).
-        from rag.rules_ingest import ingest_wazuh_rules as _ingest
         from rag.knowledge_base import KnowledgeBase
+        from rag.rules_ingest import ingest_wazuh_rules as _ingest
 
         kb = KnowledgeBase()
         try:
@@ -99,13 +100,10 @@ class IngestWazuhRules(BaseWazuhTool):
         except ToolError:
             raise
         except Exception as e:  # noqa: BLE001 - surfaced, not swallowed
-            raise ToolError(
-                f"Failed to snapshot rules into the local knowledge base: {e}"
-            ) from e
+            raise ToolError(f"Failed to snapshot rules into the local knowledge base: {e}") from e
         summary["manager"] = getattr(ctx.wazuh, "base_url", "")
         summary["note"] = (
-            f"{summary.get('note', '')} Snapshot is local-only; the manager "
-            "was not modified."
+            f"{summary.get('note', '')} Snapshot is local-only; the manager was not modified."
         )
         return summary
 

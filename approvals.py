@@ -31,23 +31,25 @@ claim_for_execution() is the single-use gate: it atomically flips
 approved -> executing under a file lock, so a replay or a concurrent request
 can only ever win once.
 """
+
 from __future__ import annotations
 
 import json
 import os
 import time
 import uuid
+from collections.abc import Iterator
 from contextlib import contextmanager
 from pathlib import Path
-from typing import Any, Iterator
+from typing import Any
 
 if os.name == "nt":
     import msvcrt
 else:
     import fcntl
 
-from config import cfg
 import permissions
+from config import cfg
 
 DEFAULT_APPROVALS_PATH = "data/approvals.json"
 
@@ -116,8 +118,11 @@ def _required_now(item: dict[str, Any]) -> int:
     """Quorum required *today* - the current config, not what was stored at
     proposal creation, so tightening policy applies to older proposals."""
     perm = item.get("permission")
-    min_count = (getattr(cfg, "APPROVAL_EXECUTE_MIN_APPROVERS", 1)
-                 if perm == "execute" else getattr(cfg, "APPROVAL_PROPOSE_MIN_APPROVERS", 1))
+    min_count = (
+        getattr(cfg, "APPROVAL_EXECUTE_MIN_APPROVERS", 1)
+        if perm == "execute"
+        else getattr(cfg, "APPROVAL_PROPOSE_MIN_APPROVERS", 1)
+    )
     return max(int(min_count or 1), 1)
 
 
@@ -162,14 +167,18 @@ def create_proposal(
     return record
 
 
-def list_proposals(status: str | None = None, path: str | Path | None = None) -> list[dict[str, Any]]:
+def list_proposals(
+    status: str | None = None, path: str | Path | None = None
+) -> list[dict[str, Any]]:
     p = _path(path)
     with _locked(p):
         items = _load(p)
         # expire stale pending proposals on read
         changed = False
         for item in items:
-            if item.get("status") == "pending" and _now() - float(item.get("created", 0)) > getattr(cfg, "APPROVAL_EXPIRY_SECONDS", 86400):
+            if item.get("status") == "pending" and _now() - float(item.get("created", 0)) > getattr(
+                cfg, "APPROVAL_EXPIRY_SECONDS", 86400
+            ):
                 item["status"] = "expired"
                 changed = True
         if changed:
@@ -185,8 +194,9 @@ def get_proposal(proposal_id: str, path: str | Path | None = None) -> dict[str, 
     return None
 
 
-def approve(proposal_id: str, by: str, path: str | Path | None = None,
-            identity_verified: bool = False) -> dict[str, Any]:
+def approve(
+    proposal_id: str, by: str, path: str | Path | None = None, identity_verified: bool = False
+) -> dict[str, Any]:
     """Approve a pending proposal. Expired ones cannot be approved. Policy:
     no self-approval for verified identities, one vote per approver, and a
     quorum (current config) before the proposal flips to approved."""
@@ -197,27 +207,41 @@ def approve(proposal_id: str, by: str, path: str | Path | None = None,
             if item.get("id") != proposal_id:
                 continue
             if item["status"] == "expired":
-                raise ValueError(f"Proposal {proposal_id} has expired and can no longer be approved.")
+                raise ValueError(
+                    f"Proposal {proposal_id} has expired and can no longer be approved."
+                )
             if item["status"] != "pending":
                 raise ValueError(f"Proposal {proposal_id} is already {item['status']}.")
-            if _now() - float(item.get("created", 0)) > getattr(cfg, "APPROVAL_EXPIRY_SECONDS", 86400):
+            if _now() - float(item.get("created", 0)) > getattr(
+                cfg, "APPROVAL_EXPIRY_SECONDS", 86400
+            ):
                 item["status"] = "expired"
                 _save(items, p)
-                raise ValueError(f"Proposal {proposal_id} has expired and can no longer be approved.")
+                raise ValueError(
+                    f"Proposal {proposal_id} has expired and can no longer be approved."
+                )
             block_self = getattr(cfg, "APPROVAL_BLOCK_SELF_APPROVAL", True)
-            if identity_verified and block_self and str(item.get("user", "")).strip() == str(by).strip():
+            if (
+                identity_verified
+                and block_self
+                and str(item.get("user", "")).strip() == str(by).strip()
+            ):
                 raise ApprovalPolicyError(
-                    "Separation of duties: the proposer cannot approve their own proposal.")
+                    "Separation of duties: the proposer cannot approve their own proposal."
+                )
             approvers = [a.get("by") for a in item.get("approvals", [])]
             if by in approvers:
                 raise ApprovalPolicyError(
-                    f"{by} has already approved proposal {proposal_id} - one vote per approver.")
+                    f"{by} has already approved proposal {proposal_id} - one vote per approver."
+                )
             item.setdefault("approvals", [])
-            item["approvals"].append({
-                "by": by,
-                "verified": bool(identity_verified),
-                "at": time.strftime("%Y-%m-%dT%H:%M:%S"),
-            })
+            item["approvals"].append(
+                {
+                    "by": by,
+                    "verified": bool(identity_verified),
+                    "at": time.strftime("%Y-%m-%dT%H:%M:%S"),
+                }
+            )
             item["approved_by"] = by
             if len(item["approvals"]) >= _required_now(item):
                 item["status"] = "approved"
@@ -227,8 +251,9 @@ def approve(proposal_id: str, by: str, path: str | Path | None = None,
     raise KeyError(f"Proposal {proposal_id} not found.")
 
 
-def claim_for_execution(proposal_id: str, by: str, path: str | Path | None = None,
-                        identity_verified: bool = False) -> dict[str, Any]:
+def claim_for_execution(
+    proposal_id: str, by: str, path: str | Path | None = None, identity_verified: bool = False
+) -> dict[str, Any]:
     """Atomically claim an approved proposal: approved -> executing. This is
     the single-use gate - a replay or concurrent claim raises ValueError and
     only one caller can ever win."""
@@ -240,11 +265,14 @@ def claim_for_execution(proposal_id: str, by: str, path: str | Path | None = Non
                 continue
             if item["status"] in ("executing", "executed", "failed"):
                 raise ValueError(
-                    f"Proposal {proposal_id} is already {item['status']} - it cannot be claimed again.")
+                    f"Proposal {proposal_id} is already {item['status']} - it cannot be claimed again."
+                )
             if item["status"] != "approved":
                 if item["status"] == "expired":
                     raise ValueError(f"Proposal {proposal_id} has expired.")
-                raise ValueError(f"Proposal {proposal_id} is not approved (status: {item['status']}).")
+                raise ValueError(
+                    f"Proposal {proposal_id} is not approved (status: {item['status']})."
+                )
             window = int(getattr(cfg, "APPROVAL_EXECUTION_WINDOW_SECONDS", 0) or 0)
             approved_ts = float(item.get("approved_at") or item.get("created") or 0)
             if window > 0 and _now() - approved_ts > window:
@@ -260,8 +288,9 @@ def claim_for_execution(proposal_id: str, by: str, path: str | Path | None = Non
     raise KeyError(f"Proposal {proposal_id} not found.")
 
 
-def finish_execution(proposal_id: str, *, ok: bool, error: str | None = None,
-                     path: str | Path | None = None) -> dict[str, Any]:
+def finish_execution(
+    proposal_id: str, *, ok: bool, error: str | None = None, path: str | Path | None = None
+) -> dict[str, Any]:
     """executing -> executed (ok=True) or failed (ok=False). Terminal."""
     p = _path(path)
     with _locked(p):
@@ -280,7 +309,9 @@ def finish_execution(proposal_id: str, *, ok: bool, error: str | None = None,
     raise KeyError(f"Proposal {proposal_id} not found.")
 
 
-def reject(proposal_id: str, by: str, reason: str = "", path: str | Path | None = None) -> dict[str, Any]:
+def reject(
+    proposal_id: str, by: str, reason: str = "", path: str | Path | None = None
+) -> dict[str, Any]:
     p = _path(path)
     with _locked(p):
         items = _load(p)
@@ -301,8 +332,9 @@ def reject(proposal_id: str, by: str, reason: str = "", path: str | Path | None 
 _CANCELLABLE = ("pending", "approved")
 
 
-def cancel(proposal_id: str, by: str, reason: str = "",
-            path: str | Path | None = None) -> dict[str, Any]:
+def cancel(
+    proposal_id: str, by: str, reason: str = "", path: str | Path | None = None
+) -> dict[str, Any]:
     """Withdraw a proposal: pending/approved -> cancelled.
 
     Without this, an approved proposal was a permanent grant: the only exit
@@ -324,7 +356,8 @@ def cancel(proposal_id: str, by: str, reason: str = "",
                 continue
             if item["status"] not in _CANCELLABLE:
                 raise ValueError(
-                    f"Proposal {proposal_id} is {item['status']} and can no longer be cancelled.")
+                    f"Proposal {proposal_id} is {item['status']} and can no longer be cancelled."
+                )
             item["status"] = "cancelled"
             item["cancelled_by"] = by
             item["cancel_reason"] = reason

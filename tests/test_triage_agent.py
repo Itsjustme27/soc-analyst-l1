@@ -7,7 +7,9 @@ Pure logic, no LLM/RAG/network needed.
 
 Run: python -m unittest tests.test_triage_agent -v
 """
+
 from __future__ import annotations
+
 import os
 import shutil
 import tempfile
@@ -19,38 +21,49 @@ os.environ.setdefault("LLM_PROVIDER", "mock")
 
 def _result(verdict="true_positive", confidence=0.95, action="monitor"):
     from agent.triage_agent import TriageResult
+
     return TriageResult(
-        verdict=verdict, confidence=confidence, recommended_action=action,
-        rationale="", evidence_used=[], transcript=[],
+        verdict=verdict,
+        confidence=confidence,
+        recommended_action=action,
+        rationale="",
+        evidence_used=[],
+        transcript=[],
     )
 
 
 class TestNeedsHumanReview(unittest.TestCase):
     def test_confident_low_stakes_verdict_does_not_need_review(self):
         from agent.triage_agent import needs_human_review
+
         self.assertFalse(needs_human_review(_result()))
 
     def test_escalate_verdict_always_needs_review(self):
         from agent.triage_agent import needs_human_review
+
         self.assertTrue(needs_human_review(_result(verdict="escalate", confidence=0.99)))
 
     def test_low_confidence_needs_review(self):
-        from agent.triage_agent import needs_human_review, cfg
+        from agent.triage_agent import cfg, needs_human_review
+
         below = cfg.AUTO_CLOSE_CONFIDENCE_THRESHOLD - 0.01
         self.assertTrue(needs_human_review(_result(confidence=below)))
 
     def test_destructive_action_needs_review_even_if_confident(self):
         from agent.triage_agent import needs_human_review
+
         self.assertTrue(needs_human_review(_result(action="isolate_host", confidence=0.99)))
         self.assertTrue(needs_human_review(_result(action="disable_account", confidence=0.99)))
 
     def test_no_rule_matches_defaults_safely(self):
         from agent.triage_agent import needs_human_review
+
         self.assertFalse(needs_human_review(_result(), rule_matches=None))
         self.assertFalse(needs_human_review(_result(), rule_matches=[]))
 
     def test_triggered_escalating_rule_forces_review(self):
         from agent.triage_agent import needs_human_review
+
         matches = [{"triggered": True, "action": {"escalate": True}}]
         self.assertTrue(needs_human_review(_result(confidence=0.99), matches))
 
@@ -58,11 +71,13 @@ class TestNeedsHumanReview(unittest.TestCase):
         # matched=True but triggered=False (e.g. threshold not yet reached)
         # should NOT force review on its own.
         from agent.triage_agent import needs_human_review
+
         matches = [{"matched": True, "triggered": False, "action": {"escalate": True}}]
         self.assertFalse(needs_human_review(_result(confidence=0.99), matches))
 
     def test_triggered_non_escalating_rule_does_not_force_review(self):
         from agent.triage_agent import needs_human_review
+
         matches = [{"triggered": True, "action": {"tag": "fyi", "escalate": False}}]
         self.assertFalse(needs_human_review(_result(confidence=0.99), matches))
 
@@ -77,29 +92,39 @@ class TestTriageAgentEndToEnd(unittest.TestCase):
 
     def setUp(self):
         from config import cfg
+
         self._orig_chroma_path = cfg.CHROMA_DB_PATH
         self.tmp_chroma = tempfile.mkdtemp(prefix="kb-test-")
         cfg.CHROMA_DB_PATH = self.tmp_chroma
 
     def tearDown(self):
         from config import cfg
+
         cfg.CHROMA_DB_PATH = self._orig_chroma_path
         shutil.rmtree(self.tmp_chroma, ignore_errors=True)
 
     def _seed_playbooks(self):
         from rag.knowledge_base import KnowledgeBase
+
         kb = KnowledgeBase()
-        kb.add("playbooks",
-               "Brute force login playbook: check MFA status and source ASN reputation before escalating.",
-               {"source": "brute_force.md"}, doc_id="brute_force")
-        kb.add("playbooks",
-               "Malware detection playbook: pull the process tree and check host alert history.",
-               {"source": "malware.md"}, doc_id="malware")
+        kb.add(
+            "playbooks",
+            "Brute force login playbook: check MFA status and source ASN reputation before escalating.",
+            {"source": "brute_force.md"},
+            doc_id="brute_force",
+        )
+        kb.add(
+            "playbooks",
+            "Malware detection playbook: pull the process tree and check host alert history.",
+            {"source": "malware.md"},
+            doc_id="malware",
+        )
 
     def test_brute_force_alert_reaches_a_verdict_via_real_kb(self):
         self._seed_playbooks()
         from agent.triage_agent import TriageAgent
         from connectors.siem import get_siem_connector
+
         agent = TriageAgent(provider="mock", siem=get_siem_connector("mock", name="mock"))
         alert = {
             "alert_id": "SPLK-TEST-1",
@@ -124,6 +149,7 @@ class TestTriageAgentEndToEnd(unittest.TestCase):
         self._seed_playbooks()
         from agent.triage_agent import TriageAgent
         from connectors.siem import get_siem_connector
+
         agent = TriageAgent(provider="mock", siem=get_siem_connector("mock", name="mock"))
         alert = {
             "alert_id": "SPLK-TEST-2",
@@ -143,11 +169,16 @@ class TestTriageAgentEndToEnd(unittest.TestCase):
         # come back empty, not error, and the agent should still finish.
         from agent.triage_agent import TriageAgent
         from connectors.siem import get_siem_connector
+
         agent = TriageAgent(provider="mock", siem=get_siem_connector("mock", name="mock"))
-        result = agent.triage({
-            "alert_id": "SPLK-TEST-3", "rule_name": "Generic alert", "severity": "low",
-            "description": "something happened",
-        })
+        result = agent.triage(
+            {
+                "alert_id": "SPLK-TEST-3",
+                "rule_name": "Generic alert",
+                "severity": "low",
+                "description": "something happened",
+            }
+        )
         self.assertIsNotNone(result.verdict)
 
 

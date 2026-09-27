@@ -5,6 +5,7 @@ filename (doc_id = stem), so edited docs are refreshed, not duplicated.
 
 Usage: python scripts_ingest_wazuh_docs.py
 """
+
 from pathlib import Path
 
 from rag.knowledge_base import COLLECTIONS, KnowledgeBase

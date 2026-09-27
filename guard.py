@@ -21,6 +21,7 @@ must be treated as data, never as an instruction. Defense is layered:
 Functions here are used by tools/registry.py when it feeds results back to
 the agent, and by the dashboard API when it echoes tool output to the UI.
 """
+
 from __future__ import annotations
 
 import json
@@ -56,7 +57,7 @@ def limit_result_size(result: Any, max_items: int | None = None) -> Any:
     if isinstance(result, list):
         return [limit_result_size(x, cap) for x in result[:cap]]
     if isinstance(result, dict):
-        return {k: limit_result_size(v, cap) for k, v in list(result.items())[:cap * 2]}
+        return {k: limit_result_size(v, cap) for k, v in list(result.items())[: cap * 2]}
     return result
 
 
@@ -81,10 +82,12 @@ def _neutralize_marker_breaks(text: str) -> str:
     """Escape marker-shaped strings that came from untrusted content, so a
     forged </TOOL_OUTPUT> / <TOOL_OUTPUT> inside log data cannot look like a
     real section boundary to the model."""
-    return (text.replace("</TOOL_OUTPUT", "&lt;/TOOL_OUTPUT")
-                .replace("<TOOL_OUTPUT", "&lt;TOOL_OUTPUT")
-                .replace("</LOG_DATA", "&lt;/LOG_DATA")
-                .replace("<LOG_DATA", "&lt;LOG_DATA"))
+    return (
+        text.replace("</TOOL_OUTPUT", "&lt;/TOOL_OUTPUT")
+        .replace("<TOOL_OUTPUT", "&lt;TOOL_OUTPUT")
+        .replace("</LOG_DATA", "&lt;/LOG_DATA")
+        .replace("<LOG_DATA", "&lt;LOG_DATA")
+    )
 
 
 def wrap_tool_output(payload: Any, nonce: str | None = None) -> str:
@@ -101,8 +104,10 @@ def wrap_tool_output(payload: Any, nonce: str | None = None) -> str:
     text = sanitize_text(str(payload))
     text = _neutralize_marker_breaks(text)
     nonce = nonce or secrets.token_hex(4)
-    return (f"\n<TOOL_OUTPUT id='{nonce}' role='data' source='wazuh'>\n"
-            f"{text}\n</TOOL_OUTPUT id='{nonce}'>\n")
+    return (
+        f"\n<TOOL_OUTPUT id='{nonce}' role='data' source='wazuh'>\n"
+        f"{text}\n</TOOL_OUTPUT id='{nonce}'>\n"
+    )
 
 
 def is_wrapped(text: str, kind: str) -> bool:
@@ -121,20 +126,35 @@ def assert_no_instruction_confusion(text: str) -> bool:
     """Cheap guard used by tests: instructions phrased inside log data markers
     must not surface outside them. Not a security boundary on its own."""
     outside = _strip_marked_sections(text)
-    dangerous = re.search(r"ignore previous instructions|delete all rules|disable approvals", outside, re.IGNORECASE)
+    dangerous = re.search(
+        r"ignore previous instructions|delete all rules|disable approvals", outside, re.IGNORECASE
+    )
     return dangerous is None
 
 
 def _strip_marked_sections(text: str) -> str:
     out = text
-    for open_, close in ((_TOOL_OUTPUT_OPEN, _TOOL_OUTPUT_CLOSE),
-                         (_LOG_DATA_OPEN, _LOG_DATA_CLOSE)):
+    for open_, close in (
+        (_TOOL_OUTPUT_OPEN, _TOOL_OUTPUT_CLOSE),
+        (_LOG_DATA_OPEN, _LOG_DATA_CLOSE),
+    ):
         out = re.sub(re.escape(open_) + r".*?" + re.escape(close), "", out, flags=re.DOTALL)
     # nonce-matched wrappers (wrap_tool_output) - strip both kinds
     for kind in ("TOOL_OUTPUT", "LOG_DATA"):
         out = re.sub(
-            r"\n<" + kind + r" id='" + _NONCE + r"'[^>]*>.*?</" + kind + r" id='" + _NONCE + r"'>\n",
-            "", out, flags=re.DOTALL)
+            r"\n<"
+            + kind
+            + r" id='"
+            + _NONCE
+            + r"'[^>]*>.*?</"
+            + kind
+            + r" id='"
+            + _NONCE
+            + r"'>\n",
+            "",
+            out,
+            flags=re.DOTALL,
+        )
     return out
 
 

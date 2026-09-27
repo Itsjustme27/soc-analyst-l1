@@ -5,10 +5,13 @@ containment action (host isolation) that is gated by DRY_RUN_ACTIONS.
 
 Docs: https://falconpy.io / https://www.falconpy.io/Service-Collections/
 """
+
 from __future__ import annotations
+
 import time
-import requests
 from typing import Any
+
+import requests
 
 from config import cfg
 

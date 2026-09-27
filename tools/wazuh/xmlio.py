@@ -7,6 +7,7 @@ flag every `fromstring` on untrusted input (bandit B314). We reject documents
 that declare a DOCTYPE or ENTITY before parsing - fail-closed, no extra
 dependency.
 """
+
 from __future__ import annotations
 
 from xml.etree import ElementTree as ET
@@ -25,7 +26,8 @@ def safe_fromstring(text: str) -> ET.Element:
         if marker in upper:
             raise UnsafeXmlError(
                 f"XML declares {marker.lower()} - DTD/entity declarations are "
-                "rejected (XXE guard); remove the declaration first.")
+                "rejected (XXE guard); remove the declaration first."
+            )
     # nosec B314 - the XXE guard above already rejected any DTD/entity
     # declaration; this fromstring never sees untrusted declarations.
     return ET.fromstring(text)  # nosec B314

@@ -9,14 +9,17 @@ Endpoints used:
 
 Auth: QRadar API token in the ``SEC`` header.
 """
+
 from __future__ import annotations
+
 import re
 import time
-import requests
 from typing import Any
 
+import requests
+
 from config import cfg
-from connectors.siem.base import SIEMConnector, resolve_cfg, resolve_bool_cfg
+from connectors.siem.base import SIEMConnector, resolve_bool_cfg, resolve_cfg
 
 # Default: every event in the last hour. Users should point QRADAR_SEARCH at a
 # query that surfaces *alerts* (e.g. QRadar offense/rule events + custom rules).

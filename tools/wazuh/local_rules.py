@@ -8,6 +8,7 @@ merge the change into the XML, and propose writing the whole file back. This
 module keeps that merge lossless (existing rules/comments preserved) and
 produces a unified diff so the human approver sees exactly what changes.
 """
+
 from __future__ import annotations
 
 import difflib
@@ -20,7 +21,7 @@ from tools.base import ToolError
 LOCAL_RULES_FILE = "local_rules.xml"
 LOCAL_DECODER_FILE = "local_decoder.xml"
 
-WRAP_GROUP = 'local,syslog,sshd,'
+WRAP_GROUP = "local,syslog,sshd,"
 WRAP_GROUP_OPEN = f'<group name="{WRAP_GROUP}">'
 WRAP_GROUP_CLOSE = "</group>"
 
@@ -84,7 +85,7 @@ def merge_rule(file_text: str, rule_xml: str, overwrite: bool = False) -> tuple[
     # not present (or file unparseable) -> append
     block = _rule_block(rule_xml)
     if root is None:
-        new_text = (f"<!-- Local rules -->\n\n{WRAP_GROUP_OPEN}\n\n{block}\n\n{WRAP_GROUP_CLOSE}\n")
+        new_text = f"<!-- Local rules -->\n\n{WRAP_GROUP_OPEN}\n\n{block}\n\n{WRAP_GROUP_CLOSE}\n"
         issues.append("file was empty/unparseable; created minimal local_rules.xml")
         return new_text, issues
     if root.tag == "group":
@@ -103,8 +104,9 @@ def merge_rule(file_text: str, rule_xml: str, overwrite: bool = False) -> tuple[
     # overwrite flow re-check: rule exists (ET scan above misses nested rules)
     existing_block = _find_rule_block(file_text, rid)
     if existing_block is not None and overwrite:
-        new_text, found, _ = _replace_block(file_text, existing_block, block,
-                                            f"replaced existing rule {rid}")
+        new_text, found, _ = _replace_block(
+            file_text, existing_block, block, f"replaced existing rule {rid}"
+        )
         if found:
             return new_text, issues
     issues.append("could not locate insertion point (no <group> root) - manual edit needed")
@@ -120,13 +122,14 @@ def _find_rule_block(file_text: str, rule_id: str | int) -> str | None:
     return m.group(0) if m else None
 
 
-def _replace_block(file_text: str, old_block: str, new_block: str | None,
-                   issue: str) -> tuple[str, bool, list[str]]:
+def _replace_block(
+    file_text: str, old_block: str, new_block: str | None, issue: str
+) -> tuple[str, bool, list[str]]:
     issues: list[str] = []
     pos = file_text.find(old_block)
     if pos < 0:
         return file_text, False, ["rule block not found textually"]
-    head, tail = file_text[:pos], file_text[pos + len(old_block):]
+    head, tail = file_text[:pos], file_text[pos + len(old_block) :]
     if new_block is None:
         # drop the block plus surrounding blank lines (collapse 3+ newlines)
         head = head.rstrip("\n")
@@ -161,10 +164,15 @@ def _serialize_file(root: ET.Element) -> str:
 
 
 def unified_diff(old: str, new: str, filename: str = LOCAL_RULES_FILE, n: int = 4) -> str:
-    return "".join(difflib.unified_diff(
-        old.splitlines(True), new.splitlines(True),
-        fromfile=f"{filename} (current)", tofile=f"{filename} (proposed)", n=n,
-    ))
+    return "".join(
+        difflib.unified_diff(
+            old.splitlines(True),
+            new.splitlines(True),
+            fromfile=f"{filename} (current)",
+            tofile=f"{filename} (proposed)",
+            n=n,
+        )
+    )
 
 
 def extract_rule_ids(file_text: str) -> list[str]:
@@ -227,7 +235,7 @@ def remove_decoder(file_text: str, name: str) -> tuple[str, bool]:
     root = parse_file(file_text)
     if root is None:
         return file_text, False
-    for i, d in enumerate(list(root)):
+    for d in list(root):
         if d.tag == "decoder" and d.attrib.get("name") == name:
             root.remove(d)
             return _serialize_file(root), True
@@ -263,8 +271,15 @@ def fetch_local_file(ctx: Any, filename: str) -> str:
 
 
 __all__ = [
-    "LOCAL_RULES_FILE", "LOCAL_DECODER_FILE",
-    "merge_rule", "remove_rule", "replace_rule",
-    "merge_decoder", "remove_decoder", "replace_decoder",
-    "unified_diff", "extract_rule_ids", "extract_rule_text",
+    "LOCAL_RULES_FILE",
+    "LOCAL_DECODER_FILE",
+    "merge_rule",
+    "remove_rule",
+    "replace_rule",
+    "merge_decoder",
+    "remove_decoder",
+    "replace_decoder",
+    "unified_diff",
+    "extract_rule_ids",
+    "extract_rule_text",
 ]

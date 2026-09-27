@@ -5,7 +5,9 @@ hashing embedding), and the retrieve_wazuh_docs tool + its registry wiring.
 
 Run: cd soc-agent && MOCK_MODE=true python3 -m unittest tests.test_rag_docs -v
 """
+
 from __future__ import annotations
+
 import os
 import shutil
 import tempfile
@@ -21,13 +23,19 @@ DOC_DIR = os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__)
 class TestWazuhDocsCollection(unittest.TestCase):
     def test_collections_includes_wazuh_docs(self):
         from rag.knowledge_base import COLLECTIONS
+
         self.assertIn("wazuh_docs", COLLECTIONS)
 
     def test_seed_dir_has_reference_docs(self):
         files = sorted(os.listdir(DOC_DIR))
         self.assertGreaterEqual(len(files), 5)  # rules, logtest, api, indexer, mitre
-        for name in ("wazuh-rules.md", "wazuh-logtest.md", "wazuh-api.md",
-                     "wazuh-indexer.md", "mitre-attack-mapping.md"):
+        for name in (
+            "wazuh-rules.md",
+            "wazuh-logtest.md",
+            "wazuh-api.md",
+            "wazuh-indexer.md",
+            "mitre-attack-mapping.md",
+        ):
             self.assertIn(name, files)
 
 
@@ -40,12 +48,15 @@ class TestIngestWazuhDocs(unittest.TestCase):
 
     def _run_ingest(self):
         from config import cfg
+
         orig = cfg.CHROMA_DB_PATH
         cfg.CHROMA_DB_PATH = self.tmp
         try:
             import scripts_ingest_wazuh_docs as mod
+
             mod.main()
             from rag.knowledge_base import KnowledgeBase
+
             return KnowledgeBase()
         finally:
             cfg.CHROMA_DB_PATH = orig
@@ -69,10 +80,18 @@ class TestRetrieveWazuhDocsTool(unittest.TestCase):
     def _patched_ctx(self):
         ctx = mock.MagicMock()
         rows = [
-            {"id": "wazuh-rules", "metadata": {"source": "wazuh-rules.md", "kind": "rule-authoring"},
-             "distance": 0.11, "text": "frequency, timeframe, and divide MUST be rule ATTRIBUTES."},
-            {"id": "wazuh-logtest", "metadata": {"source": "wazuh-logtest.md", "kind": "rule-verification"},
-             "distance": 0.42, "text": "frequency=3 fires on the 3rd occurrence in the same session."},
+            {
+                "id": "wazuh-rules",
+                "metadata": {"source": "wazuh-rules.md", "kind": "rule-authoring"},
+                "distance": 0.11,
+                "text": "frequency, timeframe, and divide MUST be rule ATTRIBUTES.",
+            },
+            {
+                "id": "wazuh-logtest",
+                "metadata": {"source": "wazuh-logtest.md", "kind": "rule-verification"},
+                "distance": 0.42,
+                "text": "frequency=3 fires on the 3rd occurrence in the same session.",
+            },
         ]
         fake = mock.MagicMock()
         fake.query.return_value = rows
@@ -80,6 +99,7 @@ class TestRetrieveWazuhDocsTool(unittest.TestCase):
 
     def test_returns_normalized_results(self):
         from tools.rag.retrieve import RetrieveWazuhDocs
+
         ctx, fake = self._patched_ctx()
         with mock.patch("rag.knowledge_base.KnowledgeBase", return_value=fake):
             out = RetrieveWazuhDocs().run(ctx, query="frequency rule")
@@ -92,6 +112,7 @@ class TestRetrieveWazuhDocsTool(unittest.TestCase):
 
     def test_redirects_to_other_collections(self):
         from tools.rag.retrieve import RetrieveWazuhDocs
+
         ctx, fake = self._patched_ctx()
         with mock.patch("rag.knowledge_base.KnowledgeBase", return_value=fake):
             RetrieveWazuhDocs().run(ctx, query="brute force", collection="playbooks", n_results=2)
@@ -100,6 +121,7 @@ class TestRetrieveWazuhDocsTool(unittest.TestCase):
     def test_unknown_collection_rejected(self):
         from tools.base import ToolError
         from tools.rag.retrieve import RetrieveWazuhDocs
+
         ctx, fake = self._patched_ctx()
         with mock.patch("rag.knowledge_base.KnowledgeBase", return_value=fake):
             with self.assertRaises(ToolError):
@@ -108,12 +130,14 @@ class TestRetrieveWazuhDocsTool(unittest.TestCase):
     def test_empty_query_rejected(self):
         from tools.base import ToolError
         from tools.rag.retrieve import RetrieveWazuhDocs
+
         with self.assertRaises(ToolError):
             RetrieveWazuhDocs().run(mock.MagicMock(), query="")
 
     def test_kb_failure_is_surfaced_not_silent(self):
         from tools.base import ToolError
         from tools.rag.retrieve import RetrieveWazuhDocs
+
         ctx = mock.MagicMock()
         fake = mock.MagicMock()
         fake.query.side_effect = RuntimeError("chroma down")
@@ -127,21 +151,29 @@ class TestRetrieveWazuhDocsRegistry(unittest.TestCase):
     def test_tool_is_registered_as_read(self):
         from tools import registry
         from tools.base import Permission
+
         self.assertIn("retrieve_wazuh_docs", registry.tool_names())
         self.assertEqual(registry.get_tool("retrieve_wazuh_docs").permission, Permission.READ)
 
     def test_read_executes_immediately_via_registry(self):
         from tools import registry
+
         fake = mock.MagicMock()
         fake.query.return_value = [
-            {"id": "x", "metadata": {"source": "wazuh-api.md", "kind": "manager-api"},
-             "distance": 0.2, "text": "q=id=NNN filters rules by id."},
+            {
+                "id": "x",
+                "metadata": {"source": "wazuh-api.md", "kind": "manager-api"},
+                "distance": 0.2,
+                "text": "q=id=NNN filters rules by id.",
+            },
         ]
         ctx = mock.MagicMock()
         ctx.approval = None
-        with mock.patch("rag.knowledge_base.KnowledgeBase", return_value=fake), \
-             mock.patch("audit.audit_log"), \
-             mock.patch("approvals.create_proposal"):
+        with (
+            mock.patch("rag.knowledge_base.KnowledgeBase", return_value=fake),
+            mock.patch("audit.audit_log"),
+            mock.patch("approvals.create_proposal"),
+        ):
             out = registry.execute(ctx, "retrieve_wazuh_docs", {"query": "q filter"})
         self.assertEqual(out["status"], "ok")
         self.assertEqual(out["result"]["count"], 1)

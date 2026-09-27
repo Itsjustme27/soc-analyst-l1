@@ -6,12 +6,13 @@ and raw events (wazuh-archives-*). Results are summarized (not full blobs),
 size-capped, and marked as untrusted data before they go to the LLM - see
 guard.py.
 """
+
 from __future__ import annotations
 
 from typing import Any
 
 from config import cfg
-from tools.base import BaseWazuhTool, Permission, ToolError, ToolContext
+from tools.base import BaseWazuhTool, Permission, ToolContext, ToolError
 from tools.indexer.queries import (
     build_alert_query,
     field_caps_summary,
@@ -42,28 +43,45 @@ def _summarize_alert(doc: dict[str, Any], index: str) -> dict[str, Any]:
         "src_port": data.get("srcport"),
         "dst_ip": data.get("dstip") or data.get("dst_ip"),
         "dst_port": data.get("dstport"),
-        "user": data.get("user") or data.get("srcuser") or data.get("winuser") or data.get("linuxuser"),
+        "user": data.get("user")
+        or data.get("srcuser")
+        or data.get("winuser")
+        or data.get("linuxuser"),
         "full_log": full_log,
     }
 
 
 class SearchWazuhAlerts(BaseWazuhTool):
     name = "search_wazuh_alerts"
-    description = ("Search Wazuh alerts (wazuh-alerts-* index). Use for: 'show me alerts', "
-                   "'top attacking IPs', 'alerts for IP X', 'all brute-force alerts'. Supports a "
-                   "free-text query, rule group/level/rule-id filters, agent and IP filters, and a "
-                   "time window (e.g. -24h, 7d). Returns summarized alerts.")
+    description = (
+        "Search Wazuh alerts (wazuh-alerts-* index). Use for: 'show me alerts', "
+        "'top attacking IPs', 'alerts for IP X', 'all brute-force alerts'. Supports a "
+        "free-text query, rule group/level/rule-id filters, agent and IP filters, and a "
+        "time window (e.g. -24h, 7d). Returns summarized alerts."
+    )
     input_schema = {
         "type": "object",
         "properties": {
-            "query": {"type": "string", "description": "free-text OpenSearch query (matches rule/groups/full_log)"},
-            "group": {"type": "string", "description": "rule group filter, e.g. 'web', 'authentication_failures', 'attack'"},
+            "query": {
+                "type": "string",
+                "description": "free-text OpenSearch query (matches rule/groups/full_log)",
+            },
+            "group": {
+                "type": "string",
+                "description": "rule group filter, e.g. 'web', 'authentication_failures', 'attack'",
+            },
             "agent": {"type": "string", "description": "agent name filter"},
             "src_ip": {"type": "string", "description": "source IP filter (data.srcip)"},
-            "level_min": {"type": "integer", "description": "minimum rule level (0-15) - e.g. 9 for high+"},
+            "level_min": {
+                "type": "integer",
+                "description": "minimum rule level (0-15) - e.g. 9 for high+",
+            },
             "level_max": {"type": "integer", "description": "maximum rule level"},
             "rule_id": {"type": "string", "description": "specific Wazuh rule id"},
-            "time_range": {"type": "string", "description": "time window, e.g. -24h, 7d, 30d. Default -24h"},
+            "time_range": {
+                "type": "string",
+                "description": "time window, e.g. -24h, 7d, 30d. Default -24h",
+            },
             "size": {"type": "integer", "description": "max alerts to return (capped)"},
         },
         "required": [],
@@ -74,9 +92,13 @@ class SearchWazuhAlerts(BaseWazuhTool):
         p = self.validate(params)
         size = min(int(p.get("size", 20) or 20), cfg.TOOL_QUERY_SIZE_LIMIT)
         query = build_alert_query(
-            q=p.get("query"), group=p.get("group"), agent=p.get("agent"),
-            src_ip=p.get("src_ip"), level_min=p.get("level_min"),
-            level_max=p.get("level_max"), rule_id=p.get("rule_id"),
+            q=p.get("query"),
+            group=p.get("group"),
+            agent=p.get("agent"),
+            src_ip=p.get("src_ip"),
+            level_min=p.get("level_min"),
+            level_max=p.get("level_max"),
+            rule_id=p.get("rule_id"),
             time_range=p.get("time_range", "-24h"),
         )
         body = search_body(query, size=size)
@@ -87,17 +109,22 @@ class SearchWazuhAlerts(BaseWazuhTool):
 
 class SearchWazuhEvents(BaseWazuhTool):
     name = "search_wazuh_events"
-    description = ("Search raw Wazuh events (wazuh-archives-* index) - the pre-rule log stream. "
-                   "Use when alerts are too coarse: see actual log lines, decoder output, "
-                   "authentication attempts that never reached a rule. Same filters as "
-                   "search_wazuh_alerts.")
+    description = (
+        "Search raw Wazuh events (wazuh-archives-* index) - the pre-rule log stream. "
+        "Use when alerts are too coarse: see actual log lines, decoder output, "
+        "authentication attempts that never reached a rule. Same filters as "
+        "search_wazuh_alerts."
+    )
     input_schema = {
         "type": "object",
         "properties": {
             "query": {"type": "string", "description": "free-text query across the raw event"},
             "agent": {"type": "string"},
             "src_ip": {"type": "string"},
-            "type": {"type": "string", "description": "event type filter e.g. 'authentication', 'web'"},
+            "type": {
+                "type": "string",
+                "description": "event type filter e.g. 'authentication', 'web'",
+            },
             "time_range": {"type": "string", "description": "default -24h"},
             "size": {"type": "integer"},
         },
@@ -128,8 +155,10 @@ class SearchWazuhEvents(BaseWazuhTool):
 
 class GetWazuhAlert(BaseWazuhTool):
     name = "get_wazuh_alert"
-    description = ("Get one Wazuh alert by its id (e.g. 1790164005.1981881) with full detail "
-                   "including all raw fields - use for 'why did this alert trigger'.")
+    description = (
+        "Get one Wazuh alert by its id (e.g. 1790164005.1981881) with full detail "
+        "including all raw fields - use for 'why did this alert trigger'."
+    )
     input_schema = {
         "type": "object",
         "properties": {"alert_id": {"type": "string"}},
@@ -145,7 +174,9 @@ class GetWazuhAlert(BaseWazuhTool):
             if str(d.get("id")) == str(p["alert_id"]):
                 return {"alert": d}
         # fall back to _id match
-        docs2 = ctx.indexer.hits("wazuh-alerts-*", {"size": 5, "query": {"ids": {"values": [p["alert_id"]]}}})
+        docs2 = ctx.indexer.hits(
+            "wazuh-alerts-*", {"size": 5, "query": {"ids": {"values": [p["alert_id"]]}}}
+        )
         if docs2:
             return {"alert": docs2[0]}
         raise ToolError(f"Alert {p['alert_id']} not found in wazuh-alerts-*.")
@@ -153,15 +184,23 @@ class GetWazuhAlert(BaseWazuhTool):
 
 class SearchWazuhIndex(BaseWazuhTool):
     name = "search_wazuh_index"
-    description = ("Run a raw OpenSearch query body against a Wazuh index (default wazuh-alerts-*). "
-                   "For advanced/custom queries (aggregations, nested filters) the other tools "
-                   "can't express. The query body must be valid OpenSearch JSON with a 'query' key.")
+    description = (
+        "Run a raw OpenSearch query body against a Wazuh index (default wazuh-alerts-*). "
+        "For advanced/custom queries (aggregations, nested filters) the other tools "
+        "can't express. The query body must be valid OpenSearch JSON with a 'query' key."
+    )
     input_schema = {
         "type": "object",
         "properties": {
             "index": {"type": "string", "description": "index or pattern, default wazuh-alerts-*"},
-            "query_body": {"type": "object", "description": "OpenSearch search body (must include 'query' + optional 'size', 'aggs', 'sort')"},
-            "summarize": {"type": "boolean", "description": "summarize alerts (default true); set false to get raw docs"},
+            "query_body": {
+                "type": "object",
+                "description": "OpenSearch search body (must include 'query' + optional 'size', 'aggs', 'sort')",
+            },
+            "summarize": {
+                "type": "boolean",
+                "description": "summarize alerts (default true); set false to get raw docs",
+            },
         },
         "required": ["query_body"],
     }
@@ -181,8 +220,11 @@ class SearchWazuhIndex(BaseWazuhTool):
         out = []
         for h in hits:
             src = h.get("_source") or {}
-            out.append(_summarize_alert({**src, "_id": h.get("_id", "")}, index)
-                       if p.get("summarize", True) else src)
+            out.append(
+                _summarize_alert({**src, "_id": h.get("_id", "")}, index)
+                if p.get("summarize", True)
+                else src
+            )
         return {
             "count": len(out),
             "total_matched": resp.get("hits", {}).get("total", {}).get("value", 0),
@@ -193,9 +235,11 @@ class SearchWazuhIndex(BaseWazuhTool):
 
 class GetIndexSchema(BaseWazuhTool):
     name = "get_index_schema"
-    description = ("Inspect the Wazuh indexer schema (field name -> type via _field_caps) for an "
-                   "index. Use before building dashboards or detection-gap analysis to see which "
-                   "fields actually exist (never assume a field exists).")
+    description = (
+        "Inspect the Wazuh indexer schema (field name -> type via _field_caps) for an "
+        "index. Use before building dashboards or detection-gap analysis to see which "
+        "fields actually exist (never assume a field exists)."
+    )
     input_schema = {
         "type": "object",
         "properties": {
@@ -208,15 +252,18 @@ class GetIndexSchema(BaseWazuhTool):
 
     def run(self, ctx: ToolContext, **params: Any) -> Any:
         p = self.validate(params)
-        return field_caps_summary(ctx.indexer, p.get("index") or "wazuh-alerts-*",
-                                  limit=int(p.get("limit", 400) or 400))
+        return field_caps_summary(
+            ctx.indexer, p.get("index") or "wazuh-alerts-*", limit=int(p.get("limit", 400) or 400)
+        )
 
 
 class VerifyOpenSearchQuery(BaseWazuhTool):
     name = "verify_opensearch_query"
-    description = ("Validate an OpenSearch query body against the indexer (size-0 execution) and "
-                   "report how many documents it matches. Use before proposing dashboard "
-                   "visualizations to prove the query is valid and has data.")
+    description = (
+        "Validate an OpenSearch query body against the indexer (size-0 execution) and "
+        "report how many documents it matches. Use before proposing dashboard "
+        "visualizations to prove the query is valid and has data."
+    )
     input_schema = {
         "type": "object",
         "properties": {
@@ -233,4 +280,5 @@ class VerifyOpenSearchQuery(BaseWazuhTool):
         if not isinstance(body, dict) or "query" not in body:
             raise ToolError("query_body must be a JSON object containing an OpenSearch 'query'.")
         from tools.indexer.queries import verify_opensearch_query as _verify
+
         return _verify(ctx.indexer, p.get("index") or "wazuh-alerts-*", body)

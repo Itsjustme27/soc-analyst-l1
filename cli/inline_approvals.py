@@ -19,9 +19,11 @@ audit) - so nothing about the safety model changes:
 MCP tool calls that aren't marked read-only get the same kind of prompt
 before they run: [y] once / [a] always this tool this session / [n] no.
 """
+
 from __future__ import annotations
 
-from typing import Any, Callable
+from collections.abc import Callable
+from typing import Any
 
 Ask = Callable[[str], str]
 Out = Callable[[str], None]
@@ -54,11 +56,18 @@ def render_proposal(p: dict[str, Any], out: Out, diff_lines: int = 30) -> None:
         out(f"│ config: {_short(p['generated_config'], 300)}")
 
 
-def review_pending(proposals: list[dict[str, Any]], *, user: str, ask: Ask, out: Out = print,
-                   always: set[str], ctx_factory: Callable[[str], Any]) -> list[dict[str, Any]]:
+def review_pending(
+    proposals: list[dict[str, Any]],
+    *,
+    user: str,
+    ask: Ask,
+    out: Out = print,
+    always: set[str],
+    ctx_factory: Callable[[str], Any],
+) -> list[dict[str, Any]]:
     """Walk new proposals interactively. Returns one outcome dict per proposal."""
-    import approvals
     import approval_executor
+    import approvals
     import audit
     import permissions
 
@@ -90,9 +99,16 @@ def review_pending(proposals: list[dict[str, Any]], *, user: str, ask: Ask, out:
         if choice == "n":
             reason = (ask("  reason (optional) › ") or "").strip()
             approvals.reject(pid, by=user, reason=reason or "rejected inline")
-            audit.audit_log(tool="approval_center", action="proposal_rejected_inline", permission="human",
-                            approval_status="rejected", params={}, user=user, agent="soc_engineer_cli",
-                            result={"proposal_id": pid, "reason": reason})
+            audit.audit_log(
+                tool="approval_center",
+                action="proposal_rejected_inline",
+                permission="human",
+                approval_status="rejected",
+                params={},
+                user=user,
+                agent="soc_engineer_cli",
+                result={"proposal_id": pid, "reason": reason},
+            )
             out(f"  ✕ rejected {pid}")
             outcomes.append({"id": pid, "outcome": "rejected"})
             continue
@@ -101,7 +117,11 @@ def review_pending(proposals: list[dict[str, Any]], *, user: str, ask: Ask, out:
             outcomes.append({"id": pid, "outcome": "pending"})
             continue
         if execute_level:
-            typed = (ask(f"  HIGH-RISK {p.get('action')}: type 'yes' to confirm › ") or "").strip().lower()
+            typed = (
+                (ask(f"  HIGH-RISK {p.get('action')}: type 'yes' to confirm › ") or "")
+                .strip()
+                .lower()
+            )
             if typed != "yes":
                 out(f"  … not confirmed - left pending ({pid})")
                 outcomes.append({"id": pid, "outcome": "pending"})
@@ -113,17 +133,27 @@ def review_pending(proposals: list[dict[str, Any]], *, user: str, ask: Ask, out:
             out(f"  ✕ approval refused: {e}")
             outcomes.append({"id": pid, "outcome": "refused", "error": str(e)})
             continue
-        audit.audit_log(tool="approval_center", action="proposal_approved_inline", permission="human",
-                        approval_status=rec.get("status"), params={}, user=user, agent="soc_engineer_cli",
-                        result={"proposal_id": pid, "identity_verified": False})
+        audit.audit_log(
+            tool="approval_center",
+            action="proposal_approved_inline",
+            permission="human",
+            approval_status=rec.get("status"),
+            params={},
+            user=user,
+            agent="soc_engineer_cli",
+            result={"proposal_id": pid, "identity_verified": False},
+        )
         if rec.get("status") != "approved":
             need = rec.get("required_approvers", 1)
             have = len(rec.get("approvals") or [])
-            out(f"  … approval recorded ({have}/{need}) - another approver is needed before it can run")
+            out(
+                f"  … approval recorded ({have}/{need}) - another approver is needed before it can run"
+            )
             outcomes.append({"id": pid, "outcome": "awaiting_approvers"})
             continue
-        res = approval_executor.execute_proposal(pid, by=user, confirm=execute_level,
-                                                 ctx_factory=ctx_factory, identity_verified=False)
+        res = approval_executor.execute_proposal(
+            pid, by=user, confirm=execute_level, ctx_factory=ctx_factory, identity_verified=False
+        )
         if res.get("ok"):
             detail = res.get("result")
             status = detail.get("status") if isinstance(detail, dict) else None
@@ -144,10 +174,13 @@ def mcp_approver(ask: Ask, out: Out = print) -> Callable[[Any, dict[str, Any]], 
             out(f"  ↻ {tool.id} (always-allowed this session)")
             return True
         import json
+
         out(f"\n┌ MCP tool call · {tool.server} › {tool.name} (not read-only)")
         out(f"│ {_short(tool.description, 200)}")
         out(f"│ args: {_short(json.dumps(args, default=str), 400)}")
-        choice = (ask(f"└ [y] run once  [a] always allow {tool.name} this session  [n] deny › ") or "")
+        choice = (
+            ask(f"└ [y] run once  [a] always allow {tool.name} this session  [n] deny › ") or ""
+        )
         choice = choice.strip().lower()[:1]
         if choice == "a":
             session_allowed.add(tool.id)

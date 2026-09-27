@@ -6,6 +6,7 @@ sanitization (control chars), marker forgery neutralization, unknown-skill
 errors, name/directory mismatch detection, and the "list never crashes on a
 malformed pack" guarantee.
 """
+
 from __future__ import annotations
 
 import tempfile
@@ -154,10 +155,12 @@ class TestSkillsRendering(unittest.TestCase):
     def test_active_skill_blocks_dedupes_and_orders(self):
         with tempfile.TemporaryDirectory() as td:
             root = Path(td)
-            _write_pack(root, "aaa", GOOD_PACK.replace("name: demo", "name: aaa").replace(
-                "# Demo", "# Aaa"))
-            _write_pack(root, "bbb", GOOD_PACK.replace("name: demo", "name: bbb").replace(
-                "# Demo", "# Bbb"))
+            _write_pack(
+                root, "aaa", GOOD_PACK.replace("name: demo", "name: aaa").replace("# Demo", "# Aaa")
+            )
+            _write_pack(
+                root, "bbb", GOOD_PACK.replace("name: demo", "name: bbb").replace("# Demo", "# Bbb")
+            )
             out = active_skill_blocks(["bbb", "aaa", "bbb"], root=root)
         self.assertEqual(out.count("<SKILL"), 2)
         self.assertLess(out.index("<SKILL name='bbb'"), out.index("<SKILL name='aaa'"))
@@ -242,10 +245,20 @@ class TestSkillsSuggestion(unittest.TestCase):
     def _root_with(self):
         td = tempfile.TemporaryDirectory()
         root = Path(td.name)
-        _write_pack(root, "sshd", GOOD_PACK.replace("name: demo", "name: sshd").replace(
-            "# Demo", "# Sshd brute force - failed auth, sshd, authentication failures"))
-        _write_pack(root, "web", GOOD_PACK.replace("name: demo", "name: web").replace(
-            "# Demo", "# Web attacks - sql injection, webshell, xss"))
+        _write_pack(
+            root,
+            "sshd",
+            GOOD_PACK.replace("name: demo", "name: sshd").replace(
+                "# Demo", "# Sshd brute force - failed auth, sshd, authentication failures"
+            ),
+        )
+        _write_pack(
+            root,
+            "web",
+            GOOD_PACK.replace("name: demo", "name: web").replace(
+                "# Demo", "# Web attacks - sql injection, webshell, xss"
+            ),
+        )
         return td, root
 
     def test_suggest_ranks_relevant_skill_first(self):

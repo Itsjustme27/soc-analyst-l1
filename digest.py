@@ -13,6 +13,7 @@ run with --period daily/weekly against a log with no "ts"-bearing entries
 will report zero activity even if alerts were actually triaged in that
 window - use --period all to see everything regardless of timestamp.
 """
+
 from __future__ import annotations
 
 import time
@@ -48,9 +49,11 @@ def build_digest_text(period: str = "daily", *, top_n_rules: int = 5, top_n_case
     if m["total_alerts"] == 0:
         lines.append("No triaged alerts in this period.")
         if since is not None:
-            lines.append("(Note: only run.py's watch-loop entries carry a timestamp - "
-                          "if you're only running main.py/the dashboard's on-demand triage, "
-                          "try --period all instead.)")
+            lines.append(
+                "(Note: only run.py's watch-loop entries carry a timestamp - "
+                "if you're only running main.py/the dashboard's on-demand triage, "
+                "try --period all instead.)"
+            )
         return "\n".join(lines)
 
     lines.append(f"Total alerts: {m['total_alerts']}")
@@ -59,23 +62,34 @@ def build_digest_text(period: str = "daily", *, top_n_rules: int = 5, top_n_case
     lines.append(f"Needs human review: {m['needs_human_review_rate'] * 100:.0f}%")
     if m["analyst_agreement"]:
         aa = m["analyst_agreement"]
-        lines.append(f"Analyst agreement: {aa['agreement_rate'] * 100:.0f}% ({aa['reviewed']} reviewed)")
+        lines.append(
+            f"Analyst agreement: {aa['agreement_rate'] * 100:.0f}% ({aa['reviewed']} reviewed)"
+        )
 
     if m["top_rules"]:
         lines.append("")
         lines.append("Top triggered rules:")
         for r in m["top_rules"][:top_n_rules]:
-            lines.append(f"  - {r['name']}: {r['triggered']}x (TP rate {r['true_positive_rate'] * 100:.0f}%)")
+            lines.append(
+                f"  - {r['name']}: {r['triggered']}x (TP rate {r['true_positive_rate'] * 100:.0f}%)"
+            )
 
     if m["by_provider"]:
         lines.append("")
         lines.append("By SIEM provider:")
         for name, s in m["by_provider"].items():
-            lines.append(f"  - {name}: {s['count']} alerts, {s['needs_review_rate'] * 100:.0f}% needs review")
+            lines.append(
+                f"  - {name}: {s['count']} alerts, {s['needs_review_rate'] * 100:.0f}% needs review"
+            )
 
     try:
-        window_minutes = max(cases.DEFAULT_WINDOW_MINUTES, (time.time() - since) / 60 if since else cases.DEFAULT_WINDOW_MINUTES)
-        grouped = [c for c in cases.group_cases(window_minutes=window_minutes) if c["alert_count"] >= 2]
+        window_minutes = max(
+            cases.DEFAULT_WINDOW_MINUTES,
+            (time.time() - since) / 60 if since else cases.DEFAULT_WINDOW_MINUTES,
+        )
+        grouped = [
+            c for c in cases.group_cases(window_minutes=window_minutes) if c["alert_count"] >= 2
+        ]
         if since is not None:
             grouped = [c for c in grouped if c["last_seen"] >= since]
         if grouped:
@@ -103,8 +117,14 @@ if __name__ == "__main__":  # pragma: no cover - thin CLI wrapper
 
     parser = argparse.ArgumentParser(description="Build and optionally send a SOC triage digest.")
     parser.add_argument("--period", default="daily", choices=["daily", "weekly", "all"])
-    parser.add_argument("--target", default="", help="Label included in the notification (e.g. '#soc-daily').")
-    parser.add_argument("--dry-run", action="store_true", help="Print the digest, don't send it via NOTIFY_WEBHOOK_URL.")
+    parser.add_argument(
+        "--target", default="", help="Label included in the notification (e.g. '#soc-daily')."
+    )
+    parser.add_argument(
+        "--dry-run",
+        action="store_true",
+        help="Print the digest, don't send it via NOTIFY_WEBHOOK_URL.",
+    )
     args = parser.parse_args()
 
     if args.dry_run:

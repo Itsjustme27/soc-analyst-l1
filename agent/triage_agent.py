@@ -13,15 +13,17 @@ Guardrails baked in here (not just in the connectors):
   - Every tool call and its result is kept in the transcript that gets
     logged with the case - full audit trail.
 """
+
 from __future__ import annotations
+
 import json
 from dataclasses import dataclass, field
 from typing import Any
 
 from config import cfg
+from connectors.siem import SIEMConnector, get_siem_connector
 from llm import get_provider
 from rag.knowledge_base import KnowledgeBase
-from connectors.siem import SIEMConnector, get_siem_connector
 
 if cfg.MOCK_MODE:
     from connectors.mock_connectors import MockCrowdStrikeConnector as CrowdStrikeConnector
@@ -35,6 +37,7 @@ def _tool_input(tc: Any) -> dict[str, Any]:
     malformed submit_verdict can't crash the whole triage run."""
     raw = getattr(tc, "input", None)
     return raw if isinstance(raw, dict) else {}
+
 
 MAX_TOOL_TURNS = 8
 
@@ -65,7 +68,9 @@ TOOLS = [
         "description": "Retrieve the relevant SOC playbook/SOP for this kind of alert.",
         "input_schema": {
             "type": "object",
-            "properties": {"query": {"type": "string", "description": "e.g. alert type or short description"}},
+            "properties": {
+                "query": {"type": "string", "description": "e.g. alert type or short description"}
+            },
             "required": ["query"],
         },
     },
@@ -141,16 +146,34 @@ TOOLS = [
         "input_schema": {
             "type": "object",
             "properties": {
-                "verdict": {"type": "string", "enum": ["false_positive", "true_positive", "escalate"]},
+                "verdict": {
+                    "type": "string",
+                    "enum": ["false_positive", "true_positive", "escalate"],
+                },
                 "confidence": {"type": "number", "description": "0.0-1.0"},
                 "recommended_action": {
                     "type": "string",
-                    "enum": ["close_no_action", "monitor", "isolate_host", "disable_account", "escalate_to_l2"],
+                    "enum": [
+                        "close_no_action",
+                        "monitor",
+                        "isolate_host",
+                        "disable_account",
+                        "escalate_to_l2",
+                    ],
                 },
-                "rationale": {"type": "string", "description": "Cite the specific evidence retrieved."},
+                "rationale": {
+                    "type": "string",
+                    "description": "Cite the specific evidence retrieved.",
+                },
                 "evidence_used": {"type": "array", "items": {"type": "string"}},
             },
-            "required": ["verdict", "confidence", "recommended_action", "rationale", "evidence_used"],
+            "required": [
+                "verdict",
+                "confidence",
+                "recommended_action",
+                "rationale",
+                "evidence_used",
+            ],
         },
     },
 ]
@@ -166,11 +189,15 @@ class TriageResult:
     transcript: list[dict[str, Any]] = field(default_factory=list)
 
 
-def needs_human_review(result: TriageResult, rule_matches: list[dict[str, Any]] | None = None) -> bool:
+def needs_human_review(
+    result: TriageResult, rule_matches: list[dict[str, Any]] | None = None
+) -> bool:
     """Single source of truth for the "does a human need to look at this"
     check - main.py, run.py, and dashboard.py's on-demand triage route all
     call this instead of each re-implementing the same three conditions."""
-    rule_escalate = any(m.get("action", {}).get("escalate") for m in (rule_matches or []) if m.get("triggered"))
+    rule_escalate = any(
+        m.get("action", {}).get("escalate") for m in (rule_matches or []) if m.get("triggered")
+    )
     return (
         result.verdict == "escalate"
         or result.confidence < cfg.AUTO_CLOSE_CONFIDENCE_THRESHOLD
@@ -236,17 +263,25 @@ class TriageAgent:
                 tools=TOOLS,
                 max_tokens=2000,
             )
-            messages.append({
-                "role": "assistant",
-                "content": resp.content,
-                "tool_calls": [
-                    {"id": tc.id, "name": tc.name, "input": _tool_input(tc)} for tc in resp.tool_calls
-                ],
-            })
+            messages.append(
+                {
+                    "role": "assistant",
+                    "content": resp.content,
+                    "tool_calls": [
+                        {"id": tc.id, "name": tc.name, "input": _tool_input(tc)}
+                        for tc in resp.tool_calls
+                    ],
+                }
+            )
 
             if not resp.tool_calls:
                 # Model didn't call a tool - nudge it, it must submit_verdict to finish.
-                messages.append({"role": "user", "content": "Please call submit_verdict to finish, or call another tool if you need more evidence."})
+                messages.append(
+                    {
+                        "role": "user",
+                        "content": "Please call submit_verdict to finish, or call another tool if you need more evidence.",
+                    }
+                )
                 continue
 
             tool_results: list[dict[str, Any]] = []
@@ -265,16 +300,24 @@ class TriageAgent:
                     except (KeyError, TypeError, ValueError) as e:
                         # Truncated/malformed verdict - never crash the run;
                         # tell the model and let it retry within the budget.
-                        transcript.append({"tool_result": {"error": "malformed verdict", "detail": str(e)}})
-                        tool_results.append({
-                            "role": "tool",
-                            "tool_call_id": call.id,
-                            "content": json.dumps(
-                                {"error": "Malformed submit_verdict arguments - expected an object with "
-                                          "verdict, confidence, recommended_action, rationale, evidence_used. "
-                                          "Please retry.", "detail": str(e)},
-                                default=str),
-                        })
+                        transcript.append(
+                            {"tool_result": {"error": "malformed verdict", "detail": str(e)}}
+                        )
+                        tool_results.append(
+                            {
+                                "role": "tool",
+                                "tool_call_id": call.id,
+                                "content": json.dumps(
+                                    {
+                                        "error": "Malformed submit_verdict arguments - expected an object with "
+                                        "verdict, confidence, recommended_action, rationale, evidence_used. "
+                                        "Please retry.",
+                                        "detail": str(e),
+                                    },
+                                    default=str,
+                                ),
+                            }
+                        )
                         continue
                     return TriageResult(
                         verdict=verdict,
@@ -289,11 +332,13 @@ class TriageAgent:
                 except Exception as e:  # connector unreachable, bad id, etc.
                     result = {"error": str(e)}
                 transcript.append({"tool_result": result})
-                tool_results.append({
-                    "role": "tool",
-                    "tool_call_id": call.id,
-                    "content": json.dumps(result, default=str),
-                })
+                tool_results.append(
+                    {
+                        "role": "tool",
+                        "tool_call_id": call.id,
+                        "content": json.dumps(result, default=str),
+                    }
+                )
             messages.extend(tool_results)
 
         # Ran out of turns without a verdict - fail safe to escalate.

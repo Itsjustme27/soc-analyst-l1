@@ -19,11 +19,13 @@ Hard rules enforced in the prompt AND in code:
   - Never fabricate rule/alert/dashboard results.
 Every tool call is audited (data/audit_log.jsonl) by the registry.
 """
+
 from __future__ import annotations
 
 import json
+from collections.abc import Callable
 from dataclasses import dataclass, field
-from typing import Any, Callable
+from typing import Any
 
 import guard
 from config import cfg
@@ -31,7 +33,8 @@ from llm import get_provider
 from tools.api_client import WazuhManagerAPI
 from tools.base import ToolContext
 from tools.indexer_client import IndexerClient
-from tools.registry import build_tools_meta, execute as run_tool
+from tools.registry import build_tools_meta
+from tools.registry import execute as run_tool
 
 MAX_TOOL_TURNS = getattr(cfg, "ENGINE_MAX_TOOL_TURNS", 10)
 
@@ -108,29 +111,40 @@ class SOCEngineer:
     # ------------------------------------------------------------------ #
     @property
     def tools(self) -> list[dict[str, Any]]:
-        return [*build_tools_meta(), {
-            "name": "answer_user",
-            "description": ("Provide the final natural-language answer to the user, plus any "
-                            "structured data. Call this exactly once at the very end. If your "
-                            "investigation produced proposals awaiting approval, reference their "
-                            "ids in the answer."),
-            "input_schema": {
-                "type": "object",
-                "properties": {
-                    "answer": {"type": "string"},
-                    "data": {"type": "object", "description": "optional structured data (alerts, rules, proposals, findings)"},
+        return [
+            *build_tools_meta(),
+            {
+                "name": "answer_user",
+                "description": (
+                    "Provide the final natural-language answer to the user, plus any "
+                    "structured data. Call this exactly once at the very end. If your "
+                    "investigation produced proposals awaiting approval, reference their "
+                    "ids in the answer."
+                ),
+                "input_schema": {
+                    "type": "object",
+                    "properties": {
+                        "answer": {"type": "string"},
+                        "data": {
+                            "type": "object",
+                            "description": "optional structured data (alerts, rules, proposals, findings)",
+                        },
+                    },
+                    "required": ["answer"],
                 },
-                "required": ["answer"],
             },
-        }]
+        ]
 
     def _ctx(self) -> ToolContext:
         if self._ctx_pending is None:
-            self._ctx_pending = ToolContext(wazuh=self.wazuh, indexer=self.indexer,
-                                            user=self.user, agent="soc_engineer")
+            self._ctx_pending = ToolContext(
+                wazuh=self.wazuh, indexer=self.indexer, user=self.user, agent="soc_engineer"
+            )
         return self._ctx_pending
 
-    def _execute_tool(self, name: str, tool_input: dict[str, Any]) -> tuple[Any, dict[str, Any] | None]:
+    def _execute_tool(
+        self, name: str, tool_input: dict[str, Any]
+    ) -> tuple[Any, dict[str, Any] | None]:
         """Run one tool via the registry. Returns (outcome, proposal or None)."""
         outcome = run_tool(self._ctx(), name, tool_input)
         if outcome.get("status") == "approval_required":
@@ -147,16 +161,22 @@ class SOCEngineer:
                 },
                 "next_steps": (proposal.get("validation") or {}).get("next_steps", []),
                 "generated_config_preview": _preview(proposal.get("generated_config")),
-                "message": ("This action requires human approval. Show it to the user and wait "
-                            "for approval in the Approval Center."),
+                "message": (
+                    "This action requires human approval. Show it to the user and wait "
+                    "for approval in the Approval Center."
+                ),
             }, proposal
         return outcome, None
 
     # ------------------------------------------------------------------ #
-    def chat(self, *, user_message: str,
-             history: list[dict[str, Any]] | None = None,
-             system: str | None = None,
-             on_step: Callable[[dict[str, Any]], None] | None = None) -> EngineerResult:
+    def chat(
+        self,
+        *,
+        user_message: str,
+        history: list[dict[str, Any]] | None = None,
+        system: str | None = None,
+        on_step: Callable[[dict[str, Any]], None] | None = None,
+    ) -> EngineerResult:
         """Run one agentic turn.
 
         `system` overrides/augments the default SYSTEM_PROMPT (used by the CLI
@@ -182,23 +202,33 @@ class SOCEngineer:
             except Exception as e:  # noqa: BLE001 - provider outage shouldn't crash the console
                 return EngineerResult(
                     reply=f"The LLM provider failed while answering: {e}",
-                    transcript=transcript, messages=messages,
+                    transcript=transcript,
+                    messages=messages,
                 )
             if not resp.tool_calls:
                 messages.append({"role": "assistant", "content": resp.content or ""})
                 continue
 
-            transcript.append({
-                "assistant": resp.content or "",
-                "tool_calls": [{"name": tc.name, "input": _tool_input(tc)} for tc in resp.tool_calls],
-            })
+            transcript.append(
+                {
+                    "assistant": resp.content or "",
+                    "tool_calls": [
+                        {"name": tc.name, "input": _tool_input(tc)} for tc in resp.tool_calls
+                    ],
+                }
+            )
             if on_step is not None:
                 on_step(transcript[-1])
-            messages.append({
-                "role": "assistant",
-                "content": resp.content,
-                "tool_calls": [{"id": tc.id, "name": tc.name, "input": _tool_input(tc)} for tc in resp.tool_calls],
-            })
+            messages.append(
+                {
+                    "role": "assistant",
+                    "content": resp.content,
+                    "tool_calls": [
+                        {"id": tc.id, "name": tc.name, "input": _tool_input(tc)}
+                        for tc in resp.tool_calls
+                    ],
+                }
+            )
 
             tool_messages = []
             done: EngineerResult | None = None
@@ -210,10 +240,17 @@ class SOCEngineer:
                         data=tool_input.get("data") or {},
                         transcript=transcript,
                         proposals=proposals,
-                        messages=messages + [{"role": "tool", "tool_call_id": tc.id,
-                                              "content": json.dumps(
-                                                  {"terminal": True, "answer": tool_input.get("answer")},
-                                                  default=str)}],
+                        messages=messages
+                        + [
+                            {
+                                "role": "tool",
+                                "tool_call_id": tc.id,
+                                "content": json.dumps(
+                                    {"terminal": True, "answer": tool_input.get("answer")},
+                                    default=str,
+                                ),
+                            }
+                        ],
                     )
                     break
                 try:
@@ -222,21 +259,23 @@ class SOCEngineer:
                     result, proposal = {"status": "error", "error": str(e)}, None
                 if proposal is not None:
                     proposals.append(_proposal_summary(proposal))
-                tool_messages.append({
-                    "role": "tool",
-                    "tool_call_id": tc.id,
-                    # Results re-entering the conversation are wrapped as DATA
-                    # in nonce-matched markers - a poisoned log can't forge a
-                    # marker boundary or leak instructions into system space.
-                    "content": guard.wrap_tool_output(result),
-                })
+                tool_messages.append(
+                    {
+                        "role": "tool",
+                        "tool_call_id": tc.id,
+                        # Results re-entering the conversation are wrapped as DATA
+                        # in nonce-matched markers - a poisoned log can't forge a
+                        # marker boundary or leak instructions into system space.
+                        "content": guard.wrap_tool_output(result),
+                    }
+                )
             if done is not None:
                 return done
             messages.extend(tool_messages)
 
         return EngineerResult(
             reply="I couldn't finish a complete answer within the tool budget. "
-                  "Please narrow the request, or check the Approval Center for pending proposals.",
+            "Please narrow the request, or check the Approval Center for pending proposals.",
             data={"proposals": [_proposal_summary(p) for p in proposals]},
             transcript=transcript,
             proposals=proposals,

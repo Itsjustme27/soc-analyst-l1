@@ -12,10 +12,13 @@ on the workspace (or Sentinel Reader for SecurityAlert tables).
 Alerts are read from the configured KQL query (default: recent SecurityAlert
 records) and mapped from SecurityAlert columns.
 """
+
 from __future__ import annotations
+
 import time
-import requests
 from typing import Any
+
+import requests
 
 from config import cfg
 from connectors.siem.base import SIEMConnector, resolve_cfg
@@ -79,7 +82,7 @@ class SentinelConnector(SIEMConnector):
         if not tables:
             return []
         cols = [c["name"] for c in tables[0].get("columns", [])]
-        return [dict(zip(cols, row)) for row in tables[0].get("rows", [])]
+        return [dict(zip(cols, row, strict=True)) for row in tables[0].get("rows", [])]
 
     # ------------------------------------------------------------------ #
     def get_new_alerts(self) -> list[dict[str, Any]]:
@@ -97,7 +100,7 @@ class SentinelConnector(SIEMConnector):
             clauses.append(f"HostName == '{host}' or CompromisedEntity == '{host}'")
         if user:
             clauses.append(f"UserName == '{user}'")
-        where = f" | where { ' or '.join(clauses) }" if clauses else ""
+        where = f" | where {' or '.join(clauses)}" if clauses else ""
         kql = f"SecurityAlert | where TimeGenerated > ago(1d){where} | take 50"
         return [self._normalize(r) for r in self._run_query(kql)]
 

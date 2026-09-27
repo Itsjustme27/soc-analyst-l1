@@ -1,0 +1,29 @@
+[tool.ruff]
+line-length = 100
+src = ["."]
+exclude = ["venv", ".venv*", "data", "tests/fixtures", "live_validation"]
+
+[tool.ruff.lint]
+select = ["E", "F", "W", "I", "UP", "B"]
+ignore = [
+  "E501",     # line length handled by project convention, not a hard gate
+  "E741",     # single-letter loop vars are a style preference here
+  "E402",     # dashboard.py keeps intentional late module imports
+]
+
+[tool.ruff.lint.per-file-ignores]
+"tests/*" = ["B", "UP"]
+
+[tool.coverage.run]
+source = ["agent", "cli", "connectors", "llm", "rag", "tools", "approvals.py", "approval_executor.py", "audit.py", "config.py", "dashboard.py", "permissions.py", "rules.py", "siem_providers.py", "agent_control.py", "scripts_engineer_cli.py"]
+omit = ["*/tests/*", "*/live_validation/*", "*/venv/*", "*/.venv*/**"]
+
+[tool.coverage.report]
+exclude_lines = [
+  "pragma: no cover",
+  "if TYPE_CHECKING:",
+  "raise NotImplementedError",
+  "if __name__ == .__main__.:",
+  "except ImportError:",
+]
+fail_under = 70

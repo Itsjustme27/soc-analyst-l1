@@ -17,6 +17,7 @@ context has no approved proposal returns an ApprovalRequired outcome instead
 of performing the write. The LLM can never bypass this by rephrasing, because
 the tool itself checks `ctx.approval`.
 """
+
 from __future__ import annotations
 
 from abc import ABC, abstractmethod

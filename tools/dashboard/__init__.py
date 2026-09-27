@@ -1,13 +1,13 @@
 # Wazuh dashboard (OpenSearch Dashboards saved-objects) tools.
-from tools.dashboard.visualizations import GetWazuhVisualizations, CreateWazuhVisualization
 from tools.dashboard.dashboards import (
-    GetWazuhDashboards,
     CreateWazuhDashboard,
+    DeleteWazuhDashboard,
+    GetWazuhDashboards,
     UpdateWazuhDashboard,
     VerifyWazuhDashboard,
-    DeleteWazuhDashboard,
 )
 from tools.dashboard.engine import DesignDetectionDashboard
+from tools.dashboard.visualizations import CreateWazuhVisualization, GetWazuhVisualizations
 
 TOOLS = [
     GetWazuhVisualizations,

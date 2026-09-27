@@ -3,7 +3,9 @@ Offline tests for the Wazuh SIEM connector - mocked HTTP, no Wazuh needed.
 
 Run: python -m unittest discover -s tests -v
 """
+
 from __future__ import annotations
+
 import unittest
 from unittest import mock
 
@@ -37,7 +39,11 @@ def _sample_source(**overrides):
             "level": 10,
             "description": "Multiple failed logins",
             "groups": ["authentication_failures"],
-            "mitre": {"id": ["T1110"], "tactic": ["Credential Access"], "technique": ["Brute Force"]},
+            "mitre": {
+                "id": ["T1110"],
+                "tactic": ["Credential Access"],
+                "technique": ["Brute Force"],
+            },
         },
         "agent": {"id": "001", "name": "wks-fin-0231", "ip": "10.0.0.55"},
         "manager": {"name": "wazuh.manager"},
@@ -63,14 +69,18 @@ class TestWazuhSeverity(unittest.TestCase):
 class TestWazuhRegistry(unittest.TestCase):
     def test_platform_registered(self):
         self.assertIn("wazuh", list_siem_platforms())
-        conn = get_siem_connector("wazuh", name="w", config={"host": "https://wazuh:9200", "verify_ssl": False})
+        conn = get_siem_connector(
+            "wazuh", name="w", config={"host": "https://wazuh:9200", "verify_ssl": False}
+        )
         self.assertIsInstance(conn, WazuhConnector)
         self.assertIsInstance(conn, SIEMConnector)
         self.assertEqual(conn.host, "https://wazuh:9200")
         self.assertFalse(conn.verify)
 
     def test_config_override_wins(self):
-        conn = WazuhConnector(config={"host": "https://wazuh:9200", "username": "u", "password": "p"})
+        conn = WazuhConnector(
+            config={"host": "https://wazuh:9200", "username": "u", "password": "p"}
+        )
         self.assertEqual(conn.username, "u")
         self.assertEqual(conn.password, "p")
         self.assertEqual(conn.index, "wazuh-alerts-*")
@@ -82,6 +92,7 @@ class TestWazuhCredentialGuard(unittest.TestCase):
 
     def setUp(self):
         from config import cfg
+
         self._orig_mock_mode = cfg.MOCK_MODE
         self._orig_password = cfg.WAZUH_PASSWORD
         cfg.MOCK_MODE = False
@@ -93,6 +104,7 @@ class TestWazuhCredentialGuard(unittest.TestCase):
 
     def tearDown(self):
         from config import cfg
+
         cfg.MOCK_MODE = self._orig_mock_mode
         cfg.WAZUH_PASSWORD = self._orig_password
 
@@ -104,26 +116,42 @@ class TestWazuhCredentialGuard(unittest.TestCase):
             WazuhConnector(config={"host": "https://wazuh.prod.corp.local:9200"})
 
     def test_explicit_password_against_remote_host_ok(self):
-        WazuhConnector(config={"host": "https://wazuh.prod.corp.local:9200", "password": "a-real-password"})
+        WazuhConnector(
+            config={"host": "https://wazuh.prod.corp.local:9200", "password": "a-real-password"}
+        )
 
     def test_mock_mode_bypasses_the_guard(self):
         from config import cfg
+
         cfg.MOCK_MODE = True
         WazuhConnector(config={"host": "https://wazuh.prod.corp.local:9200"})  # should not raise
 
 
 class TestWazuhConnector(unittest.TestCase):
     def setUp(self):
-        self.conn = WazuhConnector(name="wazuh-test", config={"host": "https://wazuh:9200", "verify_ssl": False})
+        self.conn = WazuhConnector(
+            name="wazuh-test", config={"host": "https://wazuh:9200", "verify_ssl": False}
+        )
 
     @mock.patch("connectors.siem.wazuh.requests.post")
     def test_get_new_alerts_normalizes(self, post):
-        post.return_value = FakeResponse({
-            "hits": {"hits": [_hit(_sample_source()), _hit(_sample_source(id=None,
-                                                                        rule={"id": "x", "level": 6},
-                                                                        data={"srcip": "10.1.1.1", "winuser": "jsmith"}),
-                                     doc_id="alert124")]}
-        })
+        post.return_value = FakeResponse(
+            {
+                "hits": {
+                    "hits": [
+                        _hit(_sample_source()),
+                        _hit(
+                            _sample_source(
+                                id=None,
+                                rule={"id": "x", "level": 6},
+                                data={"srcip": "10.1.1.1", "winuser": "jsmith"},
+                            ),
+                            doc_id="alert124",
+                        ),
+                    ]
+                }
+            }
+        )
         alerts = self.conn.get_new_alerts()
         self.assertEqual(len(alerts), 2)
 
@@ -158,7 +186,9 @@ class TestWazuhConnector(unittest.TestCase):
         should = body["query"]["bool"]["should"]
         fields = [s["term"] for s in should]
         self.assertTrue(any("agent.name" in t for t in fields))
-        self.assertTrue(any("data.srcuser" in t for t in fields) or any("data.winuser" in t for t in fields))
+        self.assertTrue(
+            any("data.srcuser" in t for t in fields) or any("data.winuser" in t for t in fields)
+        )
 
     @mock.patch("connectors.siem.wazuh.requests.get")
     def test_ping(self, get):

@@ -16,6 +16,7 @@ persisted atomically to a single JSON file (LOOKUP_TABLES_PATH) so a crash
 mid-write can't corrupt the store. Thread-unsafe by nature of Python GIL but
 the dashboard writes from one process; the file replace is atomic regardless.
 """
+
 from __future__ import annotations
 
 import json
@@ -61,12 +62,14 @@ def list_lookup_tables(path: str | Path | None = None) -> list[dict[str, Any]]:
     out = []
     for name, table in tables.items():
         entries = table.get("entries") or {}
-        out.append({
-            "name": name,
-            "description": table.get("description", ""),
-            "entry_count": len(entries),
-            "updated": table.get("updated", ""),
-        })
+        out.append(
+            {
+                "name": name,
+                "description": table.get("description", ""),
+                "entry_count": len(entries),
+                "updated": table.get("updated", ""),
+            }
+        )
     return sorted(out, key=lambda t: t["name"])
 
 
@@ -97,7 +100,9 @@ def search_lookup(name: str, needle: str, path: str | Path | None = None) -> lis
 
 
 # ------------------------------------------------ write ----------------- #
-def create_lookup_table(name: str, description: str = "", path: str | Path | None = None) -> dict[str, Any]:
+def create_lookup_table(
+    name: str, description: str = "", path: str | Path | None = None
+) -> dict[str, Any]:
     file = _current_path(path)
     tables = _load(file)
     if name in tables:
@@ -107,7 +112,9 @@ def create_lookup_table(name: str, description: str = "", path: str | Path | Non
     return tables[name]
 
 
-def upsert_lookup_entry(name: str, key: str, value: Any, path: str | Path | None = None) -> dict[str, Any]:
+def upsert_lookup_entry(
+    name: str, key: str, value: Any, path: str | Path | None = None
+) -> dict[str, Any]:
     """Create the table if missing, then set/merge one key. R/W friendly."""
     file = _current_path(path)
     tables = _load(file)

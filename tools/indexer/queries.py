@@ -6,6 +6,7 @@ tools build queries from validated parameters (bounded size, fixed sort, time
 range always applied) and `verify_opensearch_query` executes a size-0 count to
 prove a query the dashboard engineer generated actually matches data.
 """
+
 from __future__ import annotations
 
 from typing import Any
@@ -26,7 +27,10 @@ def to_range_expr(time_range: str | None) -> str | None:
         return tr
     if tr.startswith("-"):
         return "now" + tr
-    if tr.lower().endswith(("h", "m", "s", "d", "w", "M", "y")) and tr[:-1].replace(".", "").isdigit():
+    if (
+        tr.lower().endswith(("h", "m", "s", "d", "w", "M", "y"))
+        and tr[:-1].replace(".", "").isdigit()
+    ):
         return "now-" + tr
     if "T" in tr:  # absolute timestamp
         return tr
@@ -77,8 +81,9 @@ def build_alert_query(
     return {"bool": {"filter": must}}
 
 
-def search_body(query: dict[str, Any], size: int = 20,
-                sort_by: str = "timestamp", order: str = "desc") -> dict[str, Any]:
+def search_body(
+    query: dict[str, Any], size: int = 20, sort_by: str = "timestamp", order: str = "desc"
+) -> dict[str, Any]:
     return {
         "size": size,
         "sort": [{sort_by: {"order": order}}],
@@ -86,8 +91,9 @@ def search_body(query: dict[str, Any], size: int = 20,
     }
 
 
-def verify_opensearch_query(indexer: IndexerClient, index: str,
-                            body: dict[str, Any]) -> dict[str, Any]:
+def verify_opensearch_query(
+    indexer: IndexerClient, index: str, body: dict[str, Any]
+) -> dict[str, Any]:
     """Prove a query is valid (executes) and report how much data it matches.
 
     Executes the query with size=0 - read-only, cheap, and the same validation
@@ -106,8 +112,9 @@ def verify_opensearch_query(indexer: IndexerClient, index: str,
     }
 
 
-def field_caps_summary(indexer: IndexerClient, index: str = "wazuh-alerts-*",
-                       limit: int = 400) -> dict[str, Any]:
+def field_caps_summary(
+    indexer: IndexerClient, index: str = "wazuh-alerts-*", limit: int = 400
+) -> dict[str, Any]:
     """Readable schema summary for the agent (dashboard engineer / gap
     analysis): field -> type, sorted, capped."""
     try:

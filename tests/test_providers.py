@@ -5,6 +5,7 @@ drives the real TriageAgent end to end (RAG + mock enrichment + verdict).
 
 Run: python -m unittest discover -s tests -v
 """
+
 from __future__ import annotations
 
 import unittest
@@ -14,8 +15,8 @@ from config import cfg
 from llm import get_provider
 from llm.anthropic_provider import AnthropicProvider
 from llm.google_provider import GoogleProvider, to_google_contents
-from llm.openai_compat_provider import OpenAICompatProvider, to_openai_messages, to_openai_tools
 from llm.mock_provider import MockProvider
+from llm.openai_compat_provider import OpenAICompatProvider, to_openai_messages, to_openai_tools
 
 CANONICAL_TOOLS = [
     {
@@ -51,8 +52,12 @@ PHISHING_ALERT = {
     "alert_id": "SPLK-10250",
     "rule_name": "Phishing - User Reported Suspicious Email",
     "user": "agarcia",
-    "raw_fields": {"sender": "it-support@corp-secure-login.net", "spf": "fail",
-                   "dkim": "fail", "link_clicked": False},
+    "raw_fields": {
+        "sender": "it-support@corp-secure-login.net",
+        "spf": "fail",
+        "dkim": "fail",
+        "link_clicked": False,
+    },
 }
 
 
@@ -63,15 +68,19 @@ class TestFactory(unittest.TestCase):
     def test_freellmapi_registry(self):
         from llm import _PROVIDERS
         from llm.freellmapi_provider import FreeLLMAPIProvider
+
         self.assertIs(_PROVIDERS["freellmapi"], FreeLLMAPIProvider)
         self.assertTrue(issubclass(FreeLLMAPIProvider, OpenAICompatProvider))
 
     def test_freellmapi_defaults(self):
         from llm.freellmapi_provider import DEFAULT_BASE_URL, DEFAULT_MODEL, FreeLLMAPIProvider
+
         # Hermetic: ignore operator .env FREELLMAPI_* overrides.
-        with mock.patch.object(cfg, "FREELLMAPI_BASE_URL", ""), \
-             mock.patch.object(cfg, "FREELLMAPI_MODEL", ""), \
-             mock.patch.object(cfg, "FREELLMAPI_API_KEY", ""):
+        with (
+            mock.patch.object(cfg, "FREELLMAPI_BASE_URL", ""),
+            mock.patch.object(cfg, "FREELLMAPI_MODEL", ""),
+            mock.patch.object(cfg, "FREELLMAPI_API_KEY", ""),
+        ):
             p = FreeLLMAPIProvider()  # must not raise without a key
             self.assertEqual(p._base_url, DEFAULT_BASE_URL)
             self.assertEqual(p._model(), DEFAULT_MODEL)
@@ -80,6 +89,7 @@ class TestFactory(unittest.TestCase):
         # anthropic/openai/google need real keys at construction - check the
         # registry mapping instead of constructing them here.
         from llm import _PROVIDERS
+
         self.assertIs(_PROVIDERS["anthropic"], AnthropicProvider)
         self.assertIs(_PROVIDERS["openai"], OpenAICompatProvider)
         self.assertIs(_PROVIDERS["google"], GoogleProvider)
@@ -87,6 +97,7 @@ class TestFactory(unittest.TestCase):
 
     def test_missing_key_raises_clear_error(self):
         from llm import google_provider
+
         if not google_provider.cfg.GOOGLE_API_KEY:
             with self.assertRaises(ValueError):
                 get_provider("google")
@@ -102,13 +113,17 @@ class TestAnthropicConversion(unittest.TestCase):
         self.provider = AnthropicProvider.__new__(AnthropicProvider)
 
     def test_assistant_renders_text_and_tool_use_blocks(self):
-        out = self.provider.to_anthropic_messages([
-            {
-                "role": "assistant",
-                "content": "investigating",
-                "tool_calls": [{"id": "a", "name": "retrieve_playbook", "input": {"query": "x"}}],
-            },
-        ])
+        out = self.provider.to_anthropic_messages(
+            [
+                {
+                    "role": "assistant",
+                    "content": "investigating",
+                    "tool_calls": [
+                        {"id": "a", "name": "retrieve_playbook", "input": {"query": "x"}}
+                    ],
+                },
+            ]
+        )
         self.assertEqual(out[0]["role"], "assistant")
         self.assertEqual(out[0]["content"][0], {"type": "text", "text": "investigating"})
         self.assertEqual(
@@ -117,12 +132,18 @@ class TestAnthropicConversion(unittest.TestCase):
         )
 
     def test_consecutive_tool_results_collapse_into_one_user_message(self):
-        out = self.provider.to_anthropic_messages([
-            {"role": "user", "content": "hi"},
-            {"role": "assistant", "content": "", "tool_calls": [{"id": "c1", "name": "f", "input": {}}]},
-            {"role": "tool", "tool_call_id": "c1", "content": '{"a": 1}'},
-            {"role": "tool", "tool_call_id": "c2", "content": '{"b": 2}'},
-        ])
+        out = self.provider.to_anthropic_messages(
+            [
+                {"role": "user", "content": "hi"},
+                {
+                    "role": "assistant",
+                    "content": "",
+                    "tool_calls": [{"id": "c1", "name": "f", "input": {}}],
+                },
+                {"role": "tool", "tool_call_id": "c1", "content": '{"a": 1}'},
+                {"role": "tool", "tool_call_id": "c2", "content": '{"b": 2}'},
+            ]
+        )
         # No two adjacent user messages; both results in one tool_result list.
         roles = [m["role"] for m in out]
         self.assertEqual(roles, ["user", "assistant", "user"])
@@ -141,7 +162,11 @@ class TestOpenAIConversion(unittest.TestCase):
     def test_messages_round_trip(self):
         msgs = [
             {"role": "user", "content": "go"},
-            {"role": "assistant", "content": "", "tool_calls": [{"id": "t1", "name": "f", "input": {"x": 1}}]},
+            {
+                "role": "assistant",
+                "content": "",
+                "tool_calls": [{"id": "t1", "name": "f", "input": {"x": 1}}],
+            },
             {"role": "tool", "tool_call_id": "t1", "content": "result"},
         ]
         out = to_openai_messages(msgs)
@@ -159,10 +184,22 @@ class TestGoogleConversion(unittest.TestCase):
 
     def test_function_response_collapse_and_name_recovery(self):
         msgs = [
-            {"role": "assistant", "content": "", "tool_calls": [
-                {"id": "get_host_info::call_0", "name": "get_host_info", "input": {"host_id": "h"}},
-            ]},
-            {"role": "tool", "tool_call_id": "get_host_info::call_0", "content": '{"hostname": "WKS"}'},
+            {
+                "role": "assistant",
+                "content": "",
+                "tool_calls": [
+                    {
+                        "id": "get_host_info::call_0",
+                        "name": "get_host_info",
+                        "input": {"host_id": "h"},
+                    },
+                ],
+            },
+            {
+                "role": "tool",
+                "tool_call_id": "get_host_info::call_0",
+                "content": '{"hostname": "WKS"}',
+            },
         ]
         out = to_google_contents(msgs)
         self.assertEqual([m["role"] for m in out], ["model", "user"])
@@ -173,6 +210,7 @@ class TestGoogleConversion(unittest.TestCase):
 
     def test_function_call_id_embeds_name(self):
         from llm.base import ToolCall
+
         tc = ToolCall(id="f::call_2", name="f", input={"k": "v"})
         name = tc.id.split("::", 1)[0]  # round-trip convention used by provider
         self.assertEqual(name, "f")
@@ -184,6 +222,7 @@ class TestMockProviderEndToEnd(unittest.TestCase):
     @classmethod
     def setUpClass(cls):
         from agent.triage_agent import TriageAgent
+
         cls.agent = TriageAgent(provider="mock")
 
     def _tool_names(self, transcript):
@@ -194,8 +233,13 @@ class TestMockProviderEndToEnd(unittest.TestCase):
         self.assertEqual(r.verdict, "true_positive")
         self.assertEqual(r.recommended_action, "escalate_to_l2")
         names = self._tool_names(r.transcript)
-        for expected in ("retrieve_playbook", "retrieve_similar_cases", "retrieve_lessons",
-                         "search_related_events", "submit_verdict"):
+        for expected in (
+            "retrieve_playbook",
+            "retrieve_similar_cases",
+            "retrieve_lessons",
+            "search_related_events",
+            "submit_verdict",
+        ):
             self.assertIn(expected, names)
         self.assertTrue(r.rationale)
         self.assertEqual(len(r.evidence_used), 3)
@@ -205,8 +249,13 @@ class TestMockProviderEndToEnd(unittest.TestCase):
         self.assertEqual(r.verdict, "true_positive")
         self.assertEqual(r.recommended_action, "isolate_host")
         names = self._tool_names(r.transcript)
-        for expected in ("get_host_info", "get_process_tree", "get_detection_details",
-                         "get_host_alert_history", "submit_verdict"):
+        for expected in (
+            "get_host_info",
+            "get_process_tree",
+            "get_detection_details",
+            "get_host_alert_history",
+            "submit_verdict",
+        ):
             self.assertIn(expected, names)
 
     def test_phishing(self):
@@ -227,13 +276,20 @@ class TestToolInputCoercion(unittest.TestCase):
         class _Resp:
             def json(self):
                 return {
-                    "choices": [{"message": {
-                        "content": "",
-                        "tool_calls": [
-                            {"id": "t1", "type": "function",
-                             "function": {"name": "answer_user", "arguments": arguments}},
-                        ],
-                    }}],
+                    "choices": [
+                        {
+                            "message": {
+                                "content": "",
+                                "tool_calls": [
+                                    {
+                                        "id": "t1",
+                                        "type": "function",
+                                        "function": {"name": "answer_user", "arguments": arguments},
+                                    },
+                                ],
+                            }
+                        }
+                    ],
                 }
 
         return prov._parse_response(_Resp()).tool_calls[0].input

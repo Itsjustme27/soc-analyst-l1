@@ -15,6 +15,7 @@ watcher writes into its heartbeat must actually be alive) and the heartbeat
 age. If the watcher dies the dashboard reflects it immediately, even before a
 fresh heartbeat arrives.
 """
+
 from __future__ import annotations
 
 import json
@@ -124,10 +125,10 @@ def pid_alive(pid) -> bool:
         return False
     if os.name == "nt":
         import ctypes
+
         PROCESS_QUERY_LIMITED_INFORMATION = 0x1000
         STILL_ACTIVE = 259
-        handle = ctypes.windll.kernel32.OpenProcess(
-            PROCESS_QUERY_LIMITED_INFORMATION, False, pid_i)
+        handle = ctypes.windll.kernel32.OpenProcess(PROCESS_QUERY_LIMITED_INFORMATION, False, pid_i)
         if not handle:
             return False
         exit_code = ctypes.c_ulong()
@@ -146,6 +147,7 @@ def _iso_age(ts: str | None) -> float | None:
         return None
     try:
         import datetime
+
         dt = datetime.datetime.fromisoformat(ts.replace("Z", "+00:00"))
         return (datetime.datetime.now(datetime.timezone.utc) - dt).total_seconds()
     except Exception:  # noqa: BLE001
@@ -193,8 +195,10 @@ def list_agents() -> list[dict]:
             if has_state:
                 names.append(child.name)
     # The legacy default agent counts too when it has any artifact.
-    if any(p.exists() for p in (heartbeat_path("default"), stop_file_path("default"),
-                                log_file_path("default"))):
+    if any(
+        p.exists()
+        for p in (heartbeat_path("default"), stop_file_path("default"), log_file_path("default"))
+    ):
         names = ["default"] + [n for n in names if n != "default"]
     return [status(n) for n in names]
 
@@ -239,7 +243,9 @@ def _find_watcher_pids_windows(aid: str) -> list[int]:
     try:
         raw = subprocess.check_output(
             ["powershell", "-NoProfile", "-ExecutionPolicy", "Bypass", "-Command", script],
-            text=True, errors="replace", timeout=20,
+            text=True,
+            errors="replace",
+            timeout=20,
         ).strip()
     except (OSError, subprocess.SubprocessError):
         return []
@@ -281,6 +287,7 @@ def find_watcher_pids(agent_id: str) -> list[int]:
     legacy invocations (`python run.py` with no --agent-id at all).
     """
     import glob
+
     aid = sanitize_id(agent_id)
     if os.name == "nt":
         return _find_watcher_pids_windows(aid)

@@ -17,6 +17,7 @@ default, not as a general substitute for it.
 
 See rag/knowledge_base.py's `_embedding_function()` for how this is selected.
 """
+
 from __future__ import annotations
 
 import hashlib
@@ -80,6 +81,7 @@ def _register() -> None:
     """
     try:
         from chromadb.api.collection_configuration import known_embedding_functions
+
         known_embedding_functions[HashingEmbeddingFunction.name()] = HashingEmbeddingFunction
     except Exception:  # noqa: BLE001 - registry internals are not a public,
         # version-stable API; failing to register just means "single-process

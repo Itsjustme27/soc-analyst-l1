@@ -11,6 +11,7 @@ exact action. Execution writes the whole file back via PUT /rules/files.
 Note: after a rule change the manager must restart for the ruleset to reload -
 the proposal lists that as a follow-up EXECUTE (its own approval).
 """
+
 from __future__ import annotations
 
 from typing import Any
@@ -50,8 +51,10 @@ def _fetch_local_rules(ctx: ToolContext) -> str:
 
 class GetWazuhRules(BaseWazuhTool):
     name = "get_wazuh_rules"
-    description = ("List Wazuh detection rules from the manager (with optional group/level/search "
-                   "filters). Use to see existing detections before creating or gap-analyzing.")
+    description = (
+        "List Wazuh detection rules from the manager (with optional group/level/search "
+        "filters). Use to see existing detections before creating or gap-analyzing."
+    )
     input_schema = {
         "type": "object",
         "properties": {
@@ -71,8 +74,12 @@ class GetWazuhRules(BaseWazuhTool):
         limit = min(int(p.get("limit", 50) or 50), 500)
         try:
             resp = ctx.wazuh.get_rules(
-                limit=limit, search=p.get("search"), group=p.get("group"),
-                level=p.get("level"), filename=p.get("filename"), status=p.get("status"),
+                limit=limit,
+                search=p.get("search"),
+                group=p.get("group"),
+                level=p.get("level"),
+                filename=p.get("filename"),
+                status=p.get("status"),
             )
         except ToolError:
             raise
@@ -89,8 +96,10 @@ class GetWazuhRules(BaseWazuhTool):
 
 class GetWazuhRule(BaseWazuhTool):
     name = "get_wazuh_rule"
-    description = ("Get one Wazuh rule by id, including its XML definition when it lives in "
-                   "local_rules.xml - use before proposing a modification or to explain a detection.")
+    description = (
+        "Get one Wazuh rule by id, including its XML definition when it lives in "
+        "local_rules.xml - use before proposing a modification or to explain a detection."
+    )
     input_schema = {
         "type": "object",
         "properties": {"rule_id": {"type": "integer"}},
@@ -111,6 +120,7 @@ class GetWazuhRule(BaseWazuhTool):
         item = items[0]
         try:
             from tools.wazuh.local_rules import extract_rule_text
+
             xml = extract_rule_text(_fetch_local_rules(ctx), p["rule_id"]) or ""
         except Exception:  # noqa: BLE001
             xml = ""
@@ -119,16 +129,24 @@ class GetWazuhRule(BaseWazuhTool):
 
 class CreateWazuhRule(BaseWazuhTool):
     name = "create_wazuh_rule"
-    description = ("Create a new Wazuh rule in local_rules.xml from its XML definition. Validates "
-                   "the XML, merges it into the rules file, and shows the exact diff. WRITE: requires "
-                   "human approval; after execution the manager must be restarted (separate approval) "
-                   "for the rule to load.")
+    description = (
+        "Create a new Wazuh rule in local_rules.xml from its XML definition. Validates "
+        "the XML, merges it into the rules file, and shows the exact diff. WRITE: requires "
+        "human approval; after execution the manager must be restarted (separate approval) "
+        "for the rule to load."
+    )
     input_schema = {
         "type": "object",
         "properties": {
             "rule_xml": {"type": "string", "description": "full <rule>...</rule> XML"},
-            "overwrite": {"type": "boolean", "description": "replace an existing rule with the same id (default false)"},
-            "reason": {"type": "string", "description": "why this rule is needed (shown to the approver)"},
+            "overwrite": {
+                "type": "boolean",
+                "description": "replace an existing rule with the same id (default false)",
+            },
+            "reason": {
+                "type": "string",
+                "description": "why this rule is needed (shown to the approver)",
+            },
         },
         "required": ["rule_xml", "reason"],
     }
@@ -139,7 +157,9 @@ class CreateWazuhRule(BaseWazuhTool):
         xml = str(p["rule_xml"]).strip()
         validation = validate_wazuh_rule_xml(xml)
         if not validation["valid"]:
-            raise ToolError("Rule failed static validation:\n- " + "\n- ".join(validation["errors"]))
+            raise ToolError(
+                "Rule failed static validation:\n- " + "\n- ".join(validation["errors"])
+            )
         rule_id = rule_id_from_xml(xml)
 
         current = _fetch_local_rules(ctx)
@@ -153,8 +173,11 @@ class CreateWazuhRule(BaseWazuhTool):
         proposed = {
             "action": "create_wazuh_rule",
             "reason": p.get("reason", ""),
-            "payload": {"rule_xml": xml, "overwrite": bool(p.get("overwrite")),
-                        "reason": p.get("reason", "")},
+            "payload": {
+                "rule_xml": xml,
+                "overwrite": bool(p.get("overwrite")),
+                "reason": p.get("reason", ""),
+            },
             "permission": self.permission.value,
         }
         proposed["generated_config"] = new_content
@@ -163,8 +186,10 @@ class CreateWazuhRule(BaseWazuhTool):
             **validation,
             "issues": issues,
             "diff": diff,
-            "next_steps": ["restart_wazuh_manager (EXECUTE, own approval) to load the rule",
-                           "run_wazuh_logtest (READ) to verify the new rule fires"],
+            "next_steps": [
+                "restart_wazuh_manager (EXECUTE, own approval) to load the rule",
+                "run_wazuh_logtest (READ) to verify the new rule fires",
+            ],
         }
         ctx.approve_or_raise(proposed)
         resp = ctx.wazuh.put_rules_file(LOCAL_RULES_FILE, new_content)
@@ -180,15 +205,20 @@ class CreateWazuhRule(BaseWazuhTool):
 
 class UpdateWazuhRule(BaseWazuhTool):
     name = "update_wazuh_rule"
-    description = ("Modify an existing rule in local_rules.xml: pass the rule id and the full "
-                   "updated <rule> XML. WRITE: validates, diffs, and requires human approval. "
-                   "Manager restart needed after execution (own approval).")
+    description = (
+        "Modify an existing rule in local_rules.xml: pass the rule id and the full "
+        "updated <rule> XML. WRITE: validates, diffs, and requires human approval. "
+        "Manager restart needed after execution (own approval)."
+    )
     input_schema = {
         "type": "object",
         "properties": {
             "rule_id": {"type": "integer"},
             "rule_xml": {"type": "string", "description": "full updated <rule>...</rule> XML"},
-            "reason": {"type": "string", "description": "what changed and why (shown to the approver)"},
+            "reason": {
+                "type": "string",
+                "description": "what changed and why (shown to the approver)",
+            },
         },
         "required": ["rule_id", "rule_xml", "reason"],
     }
@@ -199,35 +229,46 @@ class UpdateWazuhRule(BaseWazuhTool):
         xml = str(p["rule_xml"]).strip()
         validation = validate_wazuh_rule_xml(xml)
         if not validation["valid"]:
-            raise ToolError("Rule failed static validation:\n- " + "\n- ".join(validation["errors"]))
+            raise ToolError(
+                "Rule failed static validation:\n- " + "\n- ".join(validation["errors"])
+            )
         current = _fetch_local_rules(ctx)
         new_content, found, _issues = replace_rule(current, p["rule_id"], xml)
         if not found:
-            raise ToolError(f"Rule {p['rule_id']} is not in {LOCAL_RULES_FILE} - cannot update it "
-                            "there. Create it or edit the file that owns it.")
+            raise ToolError(
+                f"Rule {p['rule_id']} is not in {LOCAL_RULES_FILE} - cannot update it "
+                "there. Create it or edit the file that owns it."
+            )
         diff = unified_diff(current, new_content)
         proposed = {
             "action": "update_wazuh_rule",
             "reason": p.get("reason", ""),
-            "payload": {"rule_id": p["rule_id"], "rule_xml": xml,
-                        "reason": p.get("reason", "")},
+            "payload": {"rule_id": p["rule_id"], "rule_xml": xml, "reason": p.get("reason", "")},
             "permission": self.permission.value,
         }
         proposed["generated_config"] = new_content
-        proposed["validation"] = {"valid": True, "diff": diff,
-                                  "next_steps": ["restart_wazuh_manager (own approval)",
-                                                 "run_wazuh_logtest to verify"]}
+        proposed["validation"] = {
+            "valid": True,
+            "diff": diff,
+            "next_steps": ["restart_wazuh_manager (own approval)", "run_wazuh_logtest to verify"],
+        }
         ctx.approve_or_raise(proposed)
         resp = ctx.wazuh.put_rules_file(LOCAL_RULES_FILE, new_content)
-        return {"status": "executed", "rule_id": p["rule_id"], "restart_required": True,
-                "detail": resp.get("message")}
+        return {
+            "status": "executed",
+            "rule_id": p["rule_id"],
+            "restart_required": True,
+            "detail": resp.get("message"),
+        }
 
 
 class DeleteWazuhRule(BaseWazuhTool):
     name = "delete_wazuh_rule"
-    description = ("Remove a rule from local_rules.xml by id. HIGH RISK (EXECUTE): requires "
-                   "approval AND explicit confirmation. Shows the diff of what will be removed. "
-                   "Manager restart needed to apply (own approval).")
+    description = (
+        "Remove a rule from local_rules.xml by id. HIGH RISK (EXECUTE): requires "
+        "approval AND explicit confirmation. Shows the diff of what will be removed. "
+        "Manager restart needed to apply (own approval)."
+    )
     input_schema = {
         "type": "object",
         "properties": {
@@ -243,8 +284,10 @@ class DeleteWazuhRule(BaseWazuhTool):
         current = _fetch_local_rules(ctx)
         new_content, found = remove_rule(current, p["rule_id"])
         if not found:
-            raise ToolError(f"Rule {p['rule_id']} is not in {LOCAL_RULES_FILE} (or the file does "
-                            "not exist) - nothing to delete.")
+            raise ToolError(
+                f"Rule {p['rule_id']} is not in {LOCAL_RULES_FILE} (or the file does "
+                "not exist) - nothing to delete."
+            )
         diff = unified_diff(current, new_content)
         proposed = {
             "action": "delete_wazuh_rule",
@@ -252,10 +295,17 @@ class DeleteWazuhRule(BaseWazuhTool):
             "payload": {"rule_id": p["rule_id"], "reason": p.get("reason", "")},
             "permission": self.permission.value,
         }
-        proposed["validation"] = {"valid": True, "diff": diff,
-                                  "note": "Deletion requires approval + confirmation.",
-                                  "next_steps": ["restart_wazuh_manager (own approval)"]}
+        proposed["validation"] = {
+            "valid": True,
+            "diff": diff,
+            "note": "Deletion requires approval + confirmation.",
+            "next_steps": ["restart_wazuh_manager (own approval)"],
+        }
         ctx.approve_or_raise(proposed)
         resp = ctx.wazuh.put_rules_file(LOCAL_RULES_FILE, new_content)
-        return {"status": "executed", "rule_id": p["rule_id"], "restart_required": True,
-                "detail": resp.get("message")}
+        return {
+            "status": "executed",
+            "rule_id": p["rule_id"],
+            "restart_required": True,
+            "detail": resp.get("message"),
+        }

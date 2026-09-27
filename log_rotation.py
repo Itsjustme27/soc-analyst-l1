@@ -16,6 +16,7 @@ Nothing is ever deleted by rotate_log() itself - see prune_archives() for
 that, which is separate and opt-in (a retention policy is a decision, not a
 default).
 """
+
 from __future__ import annotations
 
 import gzip
@@ -168,6 +169,7 @@ def rotate_all(
     Used by the `python log_rotation.py` CLI and available for a scheduled
     task to call directly."""
     from config import cfg
+
     results = {}
     for attr in LOG_PATHS_TO_MANAGE:
         path = getattr(cfg, attr, None)
@@ -183,12 +185,24 @@ if __name__ == "__main__":  # pragma: no cover - thin CLI wrapper
     parser = argparse.ArgumentParser(
         description="Rotate this project's JSONL logs (triage/chat/notifications/feedback)."
     )
-    parser.add_argument("--max-bytes", type=int, default=DEFAULT_MAX_BYTES,
-                         help=f"Rotate if a log exceeds this size (default {DEFAULT_MAX_BYTES}).")
-    parser.add_argument("--max-age-days", type=float, default=DEFAULT_MAX_AGE_DAYS,
-                         help=f"Rotate if a log's oldest entry is older than this (default {DEFAULT_MAX_AGE_DAYS}).")
-    parser.add_argument("--prune-archives-older-than-days", type=float, default=None,
-                         help="Also delete rotated archives older than N days (opt-in - omit to keep everything).")
+    parser.add_argument(
+        "--max-bytes",
+        type=int,
+        default=DEFAULT_MAX_BYTES,
+        help=f"Rotate if a log exceeds this size (default {DEFAULT_MAX_BYTES}).",
+    )
+    parser.add_argument(
+        "--max-age-days",
+        type=float,
+        default=DEFAULT_MAX_AGE_DAYS,
+        help=f"Rotate if a log's oldest entry is older than this (default {DEFAULT_MAX_AGE_DAYS}).",
+    )
+    parser.add_argument(
+        "--prune-archives-older-than-days",
+        type=float,
+        default=None,
+        help="Also delete rotated archives older than N days (opt-in - omit to keep everything).",
+    )
     args = parser.parse_args()
 
     results = rotate_all(max_bytes=args.max_bytes, max_age_days=args.max_age_days)
@@ -202,8 +216,12 @@ if __name__ == "__main__":  # pragma: no cover - thin CLI wrapper
 
     if args.prune_archives_older_than_days is not None:
         from config import cfg
-        seen_dirs = {Path(getattr(cfg, attr)).parent / "archive"
-                     for attr in LOG_PATHS_TO_MANAGE if getattr(cfg, attr, None)}
+
+        seen_dirs = {
+            Path(getattr(cfg, attr)).parent / "archive"
+            for attr in LOG_PATHS_TO_MANAGE
+            if getattr(cfg, attr, None)
+        }
         for d in seen_dirs:
             deleted = prune_archives(d, keep_days=args.prune_archives_older_than_days)
             for path in deleted:

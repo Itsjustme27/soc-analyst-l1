@@ -18,7 +18,9 @@ dashboard) never sees platform-specific fields:
 
     {alert_id, rule_id, rule_name, severity, description, host, user, src_ip, raw_fields}
 """
+
 from __future__ import annotations
+
 import time
 from abc import ABC, abstractmethod
 from typing import Any

@@ -12,6 +12,7 @@ Usage:
     python scripts_ingest_wazuh_rules.py --group web --max-rules 500
     python scripts_ingest_wazuh_rules.py --no-prune          # keep stale snapshots
 """
+
 from __future__ import annotations
 
 import argparse
@@ -25,19 +26,19 @@ from tools.api_client import WazuhManagerAPI
 
 def main() -> None:
     ap = argparse.ArgumentParser(description=__doc__.splitlines()[0])
-    ap.add_argument("--all", action="store_true",
-                    help="snapshot the full ruleset instead of local_rules.xml")
-    ap.add_argument("--filename", default=None,
-                    help="ruleset file to snapshot (e.g. local_rules.xml)")
+    ap.add_argument(
+        "--all", action="store_true", help="snapshot the full ruleset instead of local_rules.xml"
+    )
+    ap.add_argument(
+        "--filename", default=None, help="ruleset file to snapshot (e.g. local_rules.xml)"
+    )
     ap.add_argument("--group", default=None, help="only rules in this group")
-    ap.add_argument("--search", default=None,
-                    help="only rules matching this search term")
-    ap.add_argument("--max-rules", type=int, default=2000,
-                    help="cap on rules stored per run")
-    ap.add_argument("--no-prune", action="store_true",
-                    help="keep stale snapshots (default: prune missing)")
-    ap.add_argument("--db", default=None,
-                    help="override CHROMA_DB_PATH (default: config)")
+    ap.add_argument("--search", default=None, help="only rules matching this search term")
+    ap.add_argument("--max-rules", type=int, default=2000, help="cap on rules stored per run")
+    ap.add_argument(
+        "--no-prune", action="store_true", help="keep stale snapshots (default: prune missing)"
+    )
+    ap.add_argument("--db", default=None, help="override CHROMA_DB_PATH (default: config)")
     args = ap.parse_args()
 
     api = WazuhManagerAPI(

@@ -10,6 +10,7 @@ the gap analyzer need.
 Everything here is read-only. Writes to the indexer (dashboard saved objects)
 live in tools/dashboard/ and go through approval gates.
 """
+
 from __future__ import annotations
 
 from typing import Any
@@ -65,11 +66,14 @@ class IndexerClient:
 
     # ------------------------------------------------------------------ #
     def recent_docs(self, index: str, size: int = 20) -> list[dict[str, Any]]:
-        return self.hits(index, {
-            "size": min(size, 200),
-            "sort": [{"timestamp": {"order": "desc"}}],
-            "query": {"match_all": {}},
-        })
+        return self.hits(
+            index,
+            {
+                "size": min(size, 200),
+                "sort": [{"timestamp": {"order": "desc"}}],
+                "query": {"match_all": {}},
+            },
+        )
 
     def query_count(self, index: str, body: dict[str, Any]) -> int:
         """Result count for an arbitrary search body - used to validate that a

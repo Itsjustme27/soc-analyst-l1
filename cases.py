@@ -19,6 +19,7 @@ and the dashboard's on-demand entries don't) - an entry with no "ts" is
 treated as arriving one second after the previous entry, the same
 convention used in rules.py's backtest_rule().
 """
+
 from __future__ import annotations
 
 import json
@@ -33,7 +34,9 @@ DEFAULT_SCAN_LIMIT = 500  # grouping is O(n^2) - bound the working set
 
 
 def _triage_log_path(path: str | Path | None = None) -> Path:
-    return Path(path) if path else Path(getattr(cfg, "TRIAGE_LOG_PATH", "") or "data/triage_log.jsonl")
+    return (
+        Path(path) if path else Path(getattr(cfg, "TRIAGE_LOG_PATH", "") or "data/triage_log.jsonl")
+    )
 
 
 def _read_entries(path: Path, limit: int | None) -> list[dict[str, Any]]:
@@ -41,7 +44,7 @@ def _read_entries(path: Path, limit: int | None) -> list[dict[str, Any]]:
         return []
     lines = [l for l in path.read_text().splitlines() if l.strip()]
     if limit:
-        lines = lines[-int(limit):]
+        lines = lines[-int(limit) :]
     out = []
     now = 0.0
     for line in lines:
@@ -136,23 +139,29 @@ def group_cases(
             verdicts[v] = verdicts.get(v, 0) + 1
             if m.get("needs_human_review"):
                 needs_review += 1
-            for match in (m.get("rule_matches") or []):
+            for match in m.get("rule_matches") or []:
                 if match.get("triggered") and match.get("action", {}).get("tag"):
                     rule_tags.add(match["action"]["tag"])
         times = [m["_ts_epoch"] for m in members]
 
-        cases.append({
-            "case_id": f"case-{root}",
-            "host": sorted(hosts)[0] if len(hosts) == 1 else (", ".join(sorted(hosts)) if hosts else None),
-            "user": sorted(users)[0] if len(users) == 1 else (", ".join(sorted(users)) if users else None),
-            "alert_count": len(members),
-            "alert_ids": [a.get("alert_id") for a in alerts],
-            "verdicts": verdicts,
-            "needs_review_count": needs_review,
-            "rule_tags": sorted(rule_tags),
-            "first_seen": min(times),
-            "last_seen": max(times),
-        })
+        cases.append(
+            {
+                "case_id": f"case-{root}",
+                "host": sorted(hosts)[0]
+                if len(hosts) == 1
+                else (", ".join(sorted(hosts)) if hosts else None),
+                "user": sorted(users)[0]
+                if len(users) == 1
+                else (", ".join(sorted(users)) if users else None),
+                "alert_count": len(members),
+                "alert_ids": [a.get("alert_id") for a in alerts],
+                "verdicts": verdicts,
+                "needs_review_count": needs_review,
+                "rule_tags": sorted(rule_tags),
+                "first_seen": min(times),
+                "last_seen": max(times),
+            }
+        )
 
     cases.sort(key=lambda c: c["last_seen"], reverse=True)
     return cases
@@ -161,10 +170,14 @@ def group_cases(
 if __name__ == "__main__":  # pragma: no cover - thin CLI wrapper
     import argparse
 
-    parser = argparse.ArgumentParser(description="Group data/triage_log.jsonl alerts into cases by shared host/user.")
+    parser = argparse.ArgumentParser(
+        description="Group data/triage_log.jsonl alerts into cases by shared host/user."
+    )
     parser.add_argument("--window-minutes", type=float, default=DEFAULT_WINDOW_MINUTES)
     parser.add_argument("--limit", type=int, default=DEFAULT_SCAN_LIMIT)
-    parser.add_argument("--min-alerts", type=int, default=1, help="Only show cases with at least N alerts.")
+    parser.add_argument(
+        "--min-alerts", type=int, default=1, help="Only show cases with at least N alerts."
+    )
     args = parser.parse_args()
 
     cases = group_cases(window_minutes=args.window_minutes, limit=args.limit)
@@ -173,7 +186,9 @@ if __name__ == "__main__":  # pragma: no cover - thin CLI wrapper
         print("No cases found (or none met --min-alerts).")
     for c in cases:
         label = c["host"] or c["user"] or "(no host/user)"
-        print(f"  {c['case_id']}  {label}  {c['alert_count']} alert(s)  "
-              f"verdicts={c['verdicts']}  needs_review={c['needs_review_count']}  "
-              f"tags={c['rule_tags']}")
+        print(
+            f"  {c['case_id']}  {label}  {c['alert_count']} alert(s)  "
+            f"verdicts={c['verdicts']}  needs_review={c['needs_review_count']}  "
+            f"tags={c['rule_tags']}"
+        )
         print(f"    alerts: {', '.join(str(a) for a in c['alert_ids'])}")

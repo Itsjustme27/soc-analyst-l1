@@ -6,13 +6,16 @@ Endpoints used:
   GET  {host}/services/search/jobs/{sid}/results   (poll for results)
   GET  {host}/services/server/info                 (health check)
 """
+
 from __future__ import annotations
+
 import time
-import requests
 from typing import Any
 
+import requests
+
 from config import cfg
-from connectors.siem.base import SIEMConnector, resolve_cfg, resolve_bool_cfg
+from connectors.siem.base import SIEMConnector, resolve_bool_cfg, resolve_cfg
 
 
 class SplunkConnector(SIEMConnector):
@@ -112,7 +115,9 @@ class SplunkConnector(SIEMConnector):
     @staticmethod
     def _normalize(row: dict[str, Any]) -> dict[str, Any]:
         """Map Splunk result fields onto the common alert shape."""
-        alert_id = row.get("event_id") or row.get("rule_id") or row.get("_key") or row.get("_cd") or ""
+        alert_id = (
+            row.get("event_id") or row.get("rule_id") or row.get("_key") or row.get("_cd") or ""
+        )
         return {
             "alert_id": str(alert_id),
             "rule_id": row.get("rule_id"),
