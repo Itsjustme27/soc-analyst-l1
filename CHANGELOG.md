@@ -32,7 +32,9 @@ new since the informal
     pre-3.12 f-string gate (`scripts/check_py311_syntax.py`) now runs on every CI matrix.
   - Dashboard watcher spawn (`POST /api/agent/start`, `POST /api/agents/start`) validates
     `--siem` selectors fail-closed against the same allowlist `run.py` resolves (provider ids +
-    platform names); `shell=False` is now explicit (CodeQL "Uncontrolled command line").
+    platform names); the `Popen` argv is a fully static, fixed list and the validated selector +
+    sanitized `agent_id` are delivered to the watcher via its environment (`SOC_WATCHER_*`),
+    `shell=False` explicit (CodeQL "Uncontrolled command line").
   - Dashboard API no longer echoes exception internals to clients: unexpected exceptions return
     a generic message and the full traceback goes to the server log only, backed by a global
     error handler returning a generic JSON 500 (CodeQL "Information exposure through an
