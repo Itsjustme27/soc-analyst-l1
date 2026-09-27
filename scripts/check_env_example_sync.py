@@ -4,6 +4,7 @@
 Run in CI and pre-commit so the two never drift again. Purely additive -
 safe to run anywhere, no network, no side effects.
 """
+
 from __future__ import annotations
 
 import re

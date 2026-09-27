@@ -8,6 +8,7 @@ Run (live Wazuh dev environment only):
 Never runs automatically as part of the unit suite. Requires --live and real
 (non-mock) connectors. See docs/phase14-validation.md.
 """
+
 from __future__ import annotations
 
 import sys
