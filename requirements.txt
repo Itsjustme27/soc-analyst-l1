@@ -7,3 +7,5 @@ flask>=3.0.0
 matplotlib>=3.8.0
 python-dotenv>=1.0.0
 requests>=2.31.0
+prompt_toolkit>=3.0  # interactive input: bordered box, history, completions
+rich>=13.0           # Markdown rendering, panels, tables, spinners
