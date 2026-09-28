@@ -45,6 +45,7 @@ data/*
 Thumbs.db
 *.swp
 *.log
+!tests/fixtures/sample_events/*.log
 nohup.out
 
 # --- local DBs ---
