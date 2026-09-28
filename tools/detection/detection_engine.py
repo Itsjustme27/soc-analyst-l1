@@ -288,13 +288,27 @@ class DevelopWazuhRule(BaseWazuhTool):
         checks: list[str] = []
         parent = _find_if_sid(xml)
         if parent:
-            if _rule_exists(ctx, parent):
+            try:
+                parent_found = _rule_exists(ctx, parent)
+            except RuleLookupError as e:
+                parent_found = None
+                checks.append(f"WARNING: couldn't verify parent rule {parent} ({e})")
+            if parent_found:
                 checks.append(f"parent rule {parent} exists")
-            else:
+            elif parent_found is False:
                 checks.append(
                     f"WARNING: if_sid references rule {parent}, which is NOT in the ruleset - the rule will never fire"
                 )
-        if _rule_exists(ctx, rid):
+        # Fail safe, but say why: an unreachable manager blocks the proposal
+        # with a connection message, not a false "already exists".
+        try:
+            taken = _rule_exists(ctx, rid)
+        except RuleLookupError as e:
+            raise ToolError(
+                f"Couldn't check whether rule id {rid} is free - the Wazuh manager API isn't reachable ({e}). "
+                "Check WAZUH_API_URL / WAZUH_API_USERNAME / WAZUH_API_PASSWORD in .env, then try again."
+            ) from e
+        if taken:
             raise ToolError(
                 f"Rule id {rid} already exists in the manager ruleset - use update_wazuh_rule or pick a new id."
             )
@@ -667,12 +681,17 @@ def _find_if_sid(xml_text: str) -> int | None:
 def _rule_exists(ctx: ToolContext, rule_id: int) -> bool:
     """Existence check via GET /rules?q=id=X (the per-rule detail endpoint
     404s for built-in rules on this API build - the list endpoint is the
-    reliable route)."""
+    reliable route). Raises RuleLookupError when the manager can't be asked,
+    so callers can say "couldn't check" instead of a false "already exists"."""
     try:
         resp = ctx.wazuh.get_rules(limit=1, q=f"id={int(rule_id)}")
-        return bool(resp.get("data", {}).get("affected_items"))
-    except Exception:  # noqa: BLE001 - manager hiccup: don't hard-block
-        return True  # assume exists (fail safe: warn the approver, don't silently allow dupes)
+    except Exception as e:  # noqa: BLE001 - surfaced to the caller as a lookup failure
+        raise RuleLookupError(str(e)) from e
+    return bool(resp.get("data", {}).get("affected_items"))
+
+
+class RuleLookupError(RuntimeError):
+    """The manager ruleset couldn't be queried (unreachable / not configured)."""
 
 
 def zip_neg(neg: list[str], classes: list[str]):

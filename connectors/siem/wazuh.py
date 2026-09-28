@@ -27,6 +27,12 @@ import requests
 from config import cfg
 from connectors.siem.base import SIEMConnector, resolve_bool_cfg, resolve_cfg
 
+
+class WazuhNotConfigured(RuntimeError):
+    """Raised before any request when no indexer host is configured, instead
+    of letting `requests` fail with 'Invalid URL ... No scheme supplied'."""
+
+
 DEFAULT_INDEX = "wazuh-alerts-*"
 DEFAULT_RELATED_INDEX = "wazuh-archives-*"  # raw events, for correlation lookup
 DEFAULT_QUERY_SIZE = 20
@@ -92,7 +98,7 @@ class WazuhConnector(SIEMConnector):
     # ------------------------------------------------------------------ #
     def _search(self, index: str, body: dict[str, Any]) -> list[dict[str, Any]]:
         r = requests.post(
-            f"{self.host}/{index}/_search",
+            f"{self._base()}/{index}/_search",
             auth=self.auth,
             json=body,
             verify=self.verify,
@@ -101,6 +107,14 @@ class WazuhConnector(SIEMConnector):
         r.raise_for_status()
         return r.json().get("hits", {}).get("hits", [])
 
+    def _base(self) -> str:
+        if not self.host:
+            raise WazuhNotConfigured(
+                "The Wazuh indexer isn't configured: set WAZUH_HOST in .env "
+                "(for example https://localhost:9200) or add a Wazuh connection in Settings."
+            )
+        return self.host
+
     def search(self, index: str, body: dict[str, Any]) -> dict[str, Any]:
         """Raw OpenSearch search against the indexer - public entrypoint used
         by the AI SOC engineer tool layer (tools/indexer.py). Returns the full
@@ -108,7 +122,7 @@ class WazuhConnector(SIEMConnector):
         # The timeout kwarg is on the wrapped continuation line (a cfg-driven value
         # bandit cannot statically resolve), so the flagged call is safe.
         r = requests.post(  # nosec B113 - timeout= present on next line
-            f"{self.host}/{index}/_search",
+            f"{self._base()}/{index}/_search",
             auth=self.auth,
             json=body,
             verify=self.verify,
@@ -127,7 +141,7 @@ class WazuhConnector(SIEMConnector):
         fields = ",".join(body.get("fields") or ["*"])
         req_body = {"index_filter": body.get("index_filter")} if body.get("index_filter") else {}
         r = requests.post(
-            f"{self.host}/{index}/_field_caps?fields={fields}",
+            f"{self._base()}/{index}/_field_caps?fields={fields}",
             auth=self.auth,
             json=req_body,
             verify=self.verify,
@@ -194,7 +208,7 @@ class WazuhConnector(SIEMConnector):
         source-of-truth status change.
         """
         r = requests.post(
-            f"{self.host}/{self.index}/_update/{event_id}",
+            f"{self._base()}/{self.index}/_update/{event_id}",
             auth=self.auth,
             json={"doc": {"soc_agent_status": status, "soc_agent_note": comment}},
             verify=self.verify,
@@ -204,7 +218,7 @@ class WazuhConnector(SIEMConnector):
 
     # ------------------------------------------------------------------ #
     def _ping(self) -> str:
-        r = requests.get(self.host, auth=self.auth, verify=self.verify, timeout=10)
+        r = requests.get(self._base(), auth=self.auth, verify=self.verify, timeout=10)
         r.raise_for_status()
         name = (r.json() or {}).get("cluster_name", "")
         return f"Wazuh indexer cluster {name} auth OK ({self.index})"
