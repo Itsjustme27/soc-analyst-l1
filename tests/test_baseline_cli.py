@@ -10,7 +10,6 @@ from __future__ import annotations
 import io
 import json
 import os
-import sys
 import tempfile
 import unittest
 from contextlib import contextmanager, redirect_stdout
@@ -219,7 +218,7 @@ class BaselineUIPackage(unittest.TestCase):
     """Verify the cli.ui package imports cleanly."""
 
     def test_ui_init_exports(self):
-        from cli.ui import BLACK, ROYAL, WHITE, GREY, RICH_THEME, PT_STYLE
+        from cli.ui import BLACK, GREY, ROYAL, WHITE
         self.assertEqual(BLACK, "#000000")
         self.assertEqual(ROYAL, "#4169E1")
         self.assertEqual(WHITE, "#E8ECF8")

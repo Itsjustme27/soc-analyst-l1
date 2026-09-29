@@ -52,6 +52,30 @@ def _tool_input(tc: Any) -> dict[str, Any]:
     return raw if isinstance(raw, dict) else {}
 
 
+# --------------------------------------------------------------------------- #
+# Tool contract - rules the TOOLS depend on, shared by every prompt profile.
+#
+# Not style: dropping these breaks behaviour. Without the dashboard routing the
+# agent hand-builds dashboards with create_wazuh_dashboard (which only assembles
+# existing visualizations) and they fail or come out as the generic template;
+# without the schema rule an invented field returns zero hits, which reads as
+# "no such data exists". tests/test_prompt_profiles.py asserts every profile
+# carries this block, so a prompt rewrite can't silently drop it.
+# --------------------------------------------------------------------------- #
+_TOOL_CONTRACT = """For dashboards: call design_detection_dashboard with a short Title Case `title`
+and the user's request, in their words, as `intent` - it plans the panels against
+the live index schema and verifies every query. Do not hand-build visualizations
+for this. create_wazuh_dashboard only assembles visualizations that ALREADY exist
+(by id); never call it with ids you have not read back from Wazuh.
+
+Never assert a field exists because it usually does - call get_index_schema
+first and use only fields it returns. If schema discovery is unavailable for an
+index, say the field is unverified rather than assuming; an invented field
+returns zero results, which reads exactly like "no such data exists". For
+ATT&CK, CVE/CVSS or vulnerability data specifically, prefer
+design_threat_intel_dashboard: it queries wazuh-states-vulnerabilities-*, which
+aggregations over wazuh-alerts-* alone cannot see."""
+
 SYSTEM_PROMPT_DEFAULT = f"""You are an AI SOC Engineer for Wazuh. You investigate security
 activity, build and validate detection rules, create dashboards, and analyze
 detection gaps - always grounded in evidence you actually retrieved with tools.
@@ -78,19 +102,7 @@ Workflow for rule requests: (1) understand the log source + behaviour,
 search_wazuh_* tools, (3) generate the candidate rule XML, (4) create_wazuh_rule
 to get a validated proposal with a diff, (5) answer_user with the proposal.
 For investigations: gather evidence with search/get tools, then summarize what
-you actually found. For dashboards: call design_detection_dashboard with a short Title Case `title`
-and the user's request, in their words, as `intent` - it plans the panels against
-the live index schema and verifies every query. Do not hand-build visualizations
-for this. create_wazuh_dashboard only assembles visualizations that ALREADY exist
-(by id); never call it with ids you have not read back from Wazuh.
-
-Never assert a field exists because it usually does - call get_index_schema
-first and use only fields it returns. If schema discovery is unavailable for an
-index, say the field is unverified rather than assuming; an invented field
-returns zero results, which reads exactly like "no such data exists". For
-ATT&CK, CVE/CVSS or vulnerability data specifically, prefer
-design_threat_intel_dashboard: it queries wazuh-states-vulnerabilities-*, which
-aggregations over wazuh-alerts-* alone cannot see.
+you actually found. """ + _TOOL_CONTRACT + """
 
 Finish every answer with the `answer_user` tool: your reply text plus any
 structured data."""
@@ -107,10 +119,11 @@ structured data."""
 #     Wazuh data and arbitrary index content.
 #   - the answer_user termination contract, without which the turn has no result.
 #
-# Note this brief does NOT restate the default prompt's tool-level routing
-# (design_detection_dashboard / `intent` / design_threat_intel_dashboard) or the
-# "call get_index_schema before asserting a field exists" rule. Those are
-# specific to the Wazuh tool layer this profile describes more generically.
+#   - _TOOL_CONTRACT (dashboard routing via design_detection_dashboard + `intent`,
+#     "call get_index_schema before asserting a field exists", threat-intel
+#     routing). The brief itself stays generic; these are tool contracts, and
+#     without them dashboards fail/come out generic and invented fields read as
+#     "no data" - so they are appended to every profile, like the guard notice.
 # --------------------------------------------------------------------------- #
 SYSTEM_PROMPT_DETAILED = """You are a SOC Engineer assistant for an agentic L1 \
 triage platform. You help maintain and improve the platform that ingests SIEM \
@@ -189,6 +202,7 @@ Use code blocks for code and queries, and short checklists for rollout.
 # treats it as the only way to return a result.
 _TERMINAL_FOOTER = "Finish every answer with the `answer_user` tool: your reply text plus any structured data."
 
+SYSTEM_PROMPT_DETAILED = SYSTEM_PROMPT_DETAILED + "\n\n## Tool contract\n" + _TOOL_CONTRACT
 SYSTEM_PROMPT_DETAILED = SYSTEM_PROMPT_DETAILED + "\n\n" + _TERMINAL_FOOTER
 
 SYSTEM_PROMPT = prompt_profile.resolve(SYSTEM_PROMPT_DEFAULT, SYSTEM_PROMPT_DETAILED)

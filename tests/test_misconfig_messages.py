@@ -67,3 +67,20 @@ class TestRuleIdCheck(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main()
+
+
+class TestRepoHygiene(unittest.TestCase):
+    """.mcp.json kept coming back into the repo (it auto-starts the test fixture
+    server, whose tool returns an injection payload, for every CLI user)."""
+
+    def test_mcp_config_is_an_example_and_ignored(self):
+        import subprocess
+        from pathlib import Path
+
+        root = Path(__file__).resolve().parent.parent
+        tracked = subprocess.run(["git", "ls-files", ".mcp.json"], cwd=root, capture_output=True, text=True)
+        if tracked.returncode != 0:
+            self.skipTest("not a git checkout")
+        self.assertEqual(tracked.stdout.strip(), "", ".mcp.json must not be committed - use .mcp.json.example")
+        self.assertTrue((root / ".mcp.json.example").exists())
+        self.assertIn(".mcp.json", (root / ".gitignore").read_text().splitlines())

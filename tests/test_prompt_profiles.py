@@ -12,9 +12,9 @@ from __future__ import annotations
 import unittest
 from unittest import mock
 
+from agent import chat_agent, prompt_profile, soc_engineer, triage_agent
 from config import cfg
 from metrics import VALID_VERDICTS
-from agent import chat_agent, prompt_profile, soc_engineer, triage_agent
 
 
 def _reload_with_profile(profile: str):
@@ -167,3 +167,31 @@ class TestAnalystBriefIsSplitAcrossModules(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main()
+
+
+class TestEveryProfileCarriesTheToolContract(unittest.TestCase):
+    """The engineer's tool contract must survive any prompt rewrite. When the
+    detailed profile shipped without it, PROMPT_PROFILE=detailed silently brought
+    back the "dashboard fails / comes out as the default template" bug and the
+    invented-field false negatives."""
+
+    REQUIRED = (
+        "design_detection_dashboard",  # the tool that designs a dashboard from a request
+        "`intent`",                   # pass the user's request through
+        "ALREADY exist",              # create_wazuh_dashboard only assembles existing visualizations
+        "get_index_schema",           # verify fields before asserting them
+        "design_threat_intel_dashboard",
+    )
+
+    def test_every_profile_has_the_tool_contract(self):
+        from agent.prompt_profile import PROFILES
+
+        for profile in PROFILES:
+            _, _, engineer = _reload_with_profile(profile)
+            for needle in self.REQUIRED:
+                self.assertIn(needle, engineer, f"{profile!r} engineer prompt lost {needle!r}")
+
+    def test_default_prompt_text_is_unchanged_by_the_refactor(self):
+        _, _, engineer = _reload_with_profile("default")
+        self.assertIn("For dashboards: call design_detection_dashboard with a short Title Case `title`", engineer)
+        self.assertIn("alone cannot see.\n\nFinish every answer with the `answer_user` tool", engineer)

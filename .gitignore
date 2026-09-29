@@ -55,3 +55,6 @@ nohup.out
 .agents/
 .aider-desk/
 skills-lock.json
+
+# Local MCP server config (may reference private servers) - see .mcp.json.example
+.mcp.json

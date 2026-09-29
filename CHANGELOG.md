@@ -9,6 +9,17 @@ the tag + `VERSION` + this file's latest section into a GitHub release.
 
 ## [Unreleased]
 
+### Fixed
+
+- `PROMPT_PROFILE=detailed` dropped the engineer's tool contract (dashboard routing via
+  `design_detection_dashboard` + `intent`, "call get_index_schema before asserting a field",
+  threat-intel routing), bringing back failing/generic dashboards and invented-field false
+  negatives. The rules now live in one `_TOOL_CONTRACT` block appended to every profile, and a
+  test fails if any profile loses them. The default prompt's text is unchanged.
+- `.mcp.json` (auto-starting the test fixture server for every CLI user) is replaced by
+  `.mcp.json.example`; `.mcp.json` is git-ignored, and a test guards it.
+- Lint errors in `tests/test_baseline_cli.py` and `tests/test_prompt_profiles.py`.
+
 ### Added
 
 - Second, co-existing system-prompt set selected by `PROMPT_PROFILE`

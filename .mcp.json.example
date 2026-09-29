@@ -1,0 +1,17 @@
+{
+  "_comment": "Copy to .mcp.json (git-ignored) and edit. ${VAR} values are read from the environment / .env - never put secrets here. Tools NOT listed in read_only_tools require an inline approval before every call. Servers with \"enabled\": false are skipped at startup (start one with /mcp start <name>).",
+  "mcpServers": {
+    "demo-threatintel": {
+      "command": "python",
+      "args": ["tests/fixtures/mcp_threatintel_server.py"],
+      "read_only_tools": ["lookup_ip"],
+      "enabled": false
+    },
+    "example-remote": {
+      "url": "https://mcp.example.com/mcp",
+      "headers": {"Authorization": "Bearer ${EXAMPLE_MCP_TOKEN}"},
+      "read_only_tools": [],
+      "enabled": false
+    }
+  }
+}
