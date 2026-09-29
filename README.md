@@ -1,5 +1,4 @@
-sybsu
-a# SOC L1 Triage Agent
+# SOC L1 Triage Agent
 
 ![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)
 [![Python 3.11-3.13](https://img.shields.io/badge/Python-3.11_|_3.12_|_3.13-blue.svg)](#setup)
