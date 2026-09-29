@@ -564,7 +564,8 @@ def api_chat():
         return jsonify({"error": _safe_error(e, "Could not start the chat agent.")}), 400
 
     try:
-        result = agent.chat(user_message=message, history=history or [])
+        agent_message, _spec = _message_with_spec(message, body.get("spec"))
+        result = agent.chat(user_message=agent_message, history=history or [])
     except LLMRateLimitedError as e:
         # Upstream LLM gateway is rate limited. Answer 429 to the browser
         # (with the gateway's Retry-After when known) instead of a Flask 500
@@ -1112,6 +1113,54 @@ def _engineer_context(user: str = "dashboard-user", agent: str = "engineer_ui"):
     return ToolContext(wazuh=WazuhManagerAPI(), indexer=IndexerClient(), user=user, agent=agent)
 
 
+def _enhancer_llm():
+    """LLM for the enhancer's task classification, or None (rules only)."""
+    from config import cfg
+
+    if not getattr(cfg, "PROMPT_ENHANCER_LLM", True):
+        return None
+    try:
+        from llm import get_provider
+
+        return get_provider()
+    except Exception:  # noqa: BLE001 - enhancer falls back to keyword rules
+        return None
+
+
+def _message_with_spec(message: str, raw_spec: Any) -> tuple[str, dict[str, Any] | None]:
+    """Attach a client-confirmed spec to the message. The spec is re-validated
+    server-side (facts re-extracted from the original text); a spec whose
+    original doesn't match the message is ignored rather than trusted."""
+    import prompt_enhancer
+    from config import cfg
+
+    if not raw_spec or not getattr(cfg, "PROMPT_ENHANCER", True):
+        return message, None
+    try:
+        spec = prompt_enhancer.validate_spec(raw_spec)
+    except ValueError:
+        return message, None
+    if spec["original"] != message.strip():
+        return message, None
+    return prompt_enhancer.attach(message, spec), spec
+
+
+@app.post("/api/enhance")
+def api_enhance():
+    """Normalize a request into the prompt-enhancer spec (read-only, no tools run)."""
+    import prompt_enhancer
+    from config import cfg
+
+    body = request.get_json(force=True, silent=True) or {}
+    message = (body.get("message") or "").strip()
+    if not message:
+        return jsonify({"error": "message is required."}), 400
+    if not getattr(cfg, "PROMPT_ENHANCER", True):
+        return jsonify({"enabled": False})
+    spec = prompt_enhancer.enhance(message, _enhancer_llm())
+    return jsonify({"enabled": True, "spec": spec, "summary": prompt_enhancer.summarize(spec)})
+
+
 @app.post("/api/engineer/chat")
 def api_engineer_chat():
     """Run the conversational AI SOC engineer. Tool activity and proposals are
@@ -1141,7 +1190,8 @@ def api_engineer_chat():
         from agent.soc_engineer import SOCEngineer
 
         engineer = SOCEngineer(user=actor or "dashboard-user")
-        result = engineer.chat(user_message=message, history=list(history)[-20:])
+        agent_message, _spec = _message_with_spec(message, body.get("spec"))
+        result = engineer.chat(user_message=agent_message, history=list(history)[-20:])
     except Exception as e:  # noqa: BLE001 - surface provider/config errors to the UI
         return jsonify({"error": f"Engineer failed: {e}"}), 400
 

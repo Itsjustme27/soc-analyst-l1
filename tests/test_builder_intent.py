@@ -261,7 +261,9 @@ class TestPlanDashboard(unittest.TestCase):
 
     def test_the_prompt_only_offers_fields_that_exist_on_the_index(self):
         ctx = make_ctx(StubLLM(PRIVATE_TO_PRIVATE_PLAN), schema={"rule.groups": "keyword"})
-        planner.plan_dashboard(ctx, "anything", {"rule.groups": "keyword"}, time_range_expr=None, focus="general")
+        planner.plan_dashboard(
+            ctx, "anything", {"rule.groups": "keyword"}, time_range_expr=None, focus="general"
+        )
         sent = ctx.llm.calls[0]["messages"][0]["content"]
         self.assertIn("rule_group", sent)
         # src_ip's real field is absent, so the key must not be offered
@@ -280,7 +282,11 @@ class TestPlanDashboard(unittest.TestCase):
     def test_every_filter_being_unusable_fails_the_plan_instead_of_lying(self):
         """Silently dropping the filter would hand back a generic dashboard
         that ignores what the user asked - worse than saying it failed."""
-        plan_bad = {"title": "t", "filters": [{"field": "nope", "op": "term", "values": ["x"]}], "panels": []}
+        plan_bad = {
+            "title": "t",
+            "filters": [{"field": "nope", "op": "term", "values": ["x"]}],
+            "panels": [],
+        }
         plan = planner.plan_dashboard(
             make_ctx(StubLLM(plan_bad)), "x", SCHEMA, time_range_expr=None, focus="general"
         )
@@ -335,7 +341,8 @@ class TestDesignDetectionDashboardWithIntent(unittest.TestCase):
     def test_intent_changes_the_panels_not_just_the_prose(self):
         """THE regression: the same request used to yield the generic set."""
         proposed = self._run(
-            make_ctx(StubLLM(PRIVATE_TO_PRIVATE_PLAN)), intent="ssh failed login private to private ip"
+            make_ctx(StubLLM(PRIVATE_TO_PRIVATE_PLAN)),
+            intent="ssh failed login private to private ip",
         )
         slugs = [v["slug"] for v in proposed["generated_config"]["visualizations"]]
         self.assertIn("breakdown_src_ip", slugs)
@@ -388,7 +395,12 @@ class TestDesignDetectionDashboardWithIntent(unittest.TestCase):
             {"terms": {"rule.id": ["5716", "5760"]}},
             {"match_phrase": {"rule.description": "failed login"}},
             {"range": {"timestamp": {"gte": "now-7d"}}},
-            {"bool": {"should": [{"range": {"data.srcip": "10.0.0.0/8"}}], "minimum_should_match": 1}},
+            {
+                "bool": {
+                    "should": [{"range": {"data.srcip": "10.0.0.0/8"}}],
+                    "minimum_should_match": 1,
+                }
+            },
             {"exists": {"field": "data.user"}},  # not specially handled
         ]
         rendered = _filters({"bool": {"filter": clauses}}, "idx-1")
@@ -415,18 +427,45 @@ class TestDesignDetectionDashboardWithIntent(unittest.TestCase):
         )
         self.assertTrue(proposed["validation"]["evidence"]["intent_filter_matched_nothing"])
 
-    def test_a_planner_outage_falls_back_to_the_template_and_says_so(self):
+    def test_a_planner_outage_fails_loudly_instead_of_proposing_the_template(self):
+        """A request the planner couldn't handle must not come back as the generic
+        preset dressed up as success - that was the "it always makes the same
+        default dashboard" report."""
+
         class Boom:
             def chat_text(self, **kw):
                 raise RuntimeError("no model")
 
-        proposed = self._run(make_ctx(Boom()), intent="ssh private", focus="ssh")
+        with self.assertRaises(ToolError) as cm:
+            self._run(make_ctx(Boom()), intent="ssh private", focus="ssh")
+        msg = str(cm.exception)
+        self.assertIn("Couldn't plan a dashboard for 'ssh private'", msg)
+        self.assertIn("no model", msg)
+        self.assertIn("Nothing was proposed", msg)
+
+    def test_intent_is_taken_from_reason_when_the_agent_omits_it(self):
+        request = "ssh failed logins private to private"
+        proposed = self._run(make_ctx(StubLLM(PRIVATE_TO_PRIVATE_PLAN)), reason=request)
         ev = proposed["validation"]["evidence"]
-        self.assertIn("planner_fallback", ev)
-        slugs = [v["slug"] for v in proposed["generated_config"]["visualizations"]]
-        self.assertIn("top_src_ips", slugs)  # fell back to the fixed preset
-        # a fallback must not be passed off as a plan: no filter was applied
-        self.assertNotIn("intent_filter", ev)
+        self.assertEqual(ev["planned_from_intent"], request)
+        self.assertEqual(ev["intent_source"], "reason")
+        self.assertTrue(ev["intent_filter"])
+
+    def test_a_one_word_reason_is_not_treated_as_a_request(self):
+        class NeverCalled:
+            def chat_text(self, **kw):
+                raise AssertionError("planner must not run for a trivial reason")
+
+        proposed = self._run(make_ctx(NeverCalled()), reason="needed", focus="ssh")
+        self.assertNotIn("planned_from_intent", proposed["validation"]["evidence"])
+
+    def test_the_ui_preset_reason_still_gets_the_preset(self):
+        class NeverCalled:
+            def chat_text(self, **kw):
+                raise AssertionError("planner must not run for the preset path")
+
+        proposed = self._run(make_ctx(NeverCalled()), reason="Dashboard builder (ssh)", focus="ssh")
+        self.assertNotIn("planned_from_intent", proposed["validation"]["evidence"])
 
     def test_no_intent_still_uses_the_preset_unchanged(self):
         """Back-compat: the old enum path must behave exactly as before."""
@@ -477,7 +516,10 @@ class TestDraftWazuhRule(unittest.TestCase):
         self.assertTrue(out["negatives_optional"])
 
     def test_negatives_are_returned_when_the_model_has_a_real_near_miss(self):
-        draft = dict(VALID_DRAFT, negative_samples=["Nov 21 09:41:09 db01 sshd[2710]: Accepted password for admin"])
+        draft = dict(
+            VALID_DRAFT,
+            negative_samples=["Nov 21 09:41:09 db01 sshd[2710]: Accepted password for admin"],
+        )
         out = DraftWazuhRule().run(make_ctx(StubLLM(draft)), intent="ssh failures")
         self.assertEqual(len(out["negative_samples"]), 1)
 
@@ -493,7 +535,9 @@ class TestDraftWazuhRule(unittest.TestCase):
         self.assertIn("no <rule> XML", str(cm.exception))
 
     def test_an_invalid_draft_is_flagged_rather_than_hidden(self):
-        bad = dict(VALID_DRAFT, rule_xml='<rule id="100300" level="99"><description>d</description></rule>')
+        bad = dict(
+            VALID_DRAFT, rule_xml='<rule id="100300" level="99"><description>d</description></rule>'
+        )
         out = DraftWazuhRule().run(make_ctx(StubLLM(bad)), intent="ssh")
         self.assertFalse(out["static_validation"]["valid"])
         self.assertTrue(out["static_validation"]["errors"])
@@ -528,7 +572,9 @@ class TestDraftWazuhRule(unittest.TestCase):
         self.assertIn("gateway down", str(cm.exception))
 
     def test_xml_wrapped_in_prose_is_still_extracted(self):
-        draft = dict(VALID_DRAFT, rule_xml="Here you go:\n" + VALID_DRAFT["rule_xml"] + "\nHope that helps!")
+        draft = dict(
+            VALID_DRAFT, rule_xml="Here you go:\n" + VALID_DRAFT["rule_xml"] + "\nHope that helps!"
+        )
         out = DraftWazuhRule().run(make_ctx(StubLLM(draft)), intent="ssh")
         self.assertTrue(out["rule_xml"].startswith("<rule"))
         self.assertTrue(out["rule_xml"].endswith("</rule>"))
@@ -619,7 +665,12 @@ class TestEngineerToolRoute(unittest.TestCase):
 
         app.config["TESTING"] = True
         self.client = app.test_client()
-        self._orig = (cfg.DASHBOARD_TOKEN, cfg.DASHBOARD_USERS, cfg.APPROVALS_PATH, cfg.AUDIT_LOG_PATH)
+        self._orig = (
+            cfg.DASHBOARD_TOKEN,
+            cfg.DASHBOARD_USERS,
+            cfg.APPROVALS_PATH,
+            cfg.AUDIT_LOG_PATH,
+        )
         cfg.DASHBOARD_TOKEN = ""
         cfg.DASHBOARD_USERS = "alice:tokA:admin"
         # keep this off the developer's real data/ files
@@ -722,3 +773,81 @@ class TestTheBuildersAreWiredUp(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main()
+
+
+class TestPlannerVocabulary(unittest.TestCase):
+    """Common requests must be expressible (audit 2026-09-28: URL / status /
+    country / MITRE / Windows asks were silently dropped to generic panels)."""
+
+    SCHEMA = {
+        "timestamp": "date",
+        "rule.groups": "keyword",
+        "data.url": "keyword",
+        "data.id": "keyword",
+        "GeoLocation.country_name": "keyword",
+        "rule.mitre.technique": "keyword",
+        "rule.mitre.tactic": "keyword",
+        "data.win.system.eventID": "keyword",
+        "data.srcip": "ip",
+    }
+
+    def test_new_keys_and_aliases_resolve(self):
+        from tools.dashboard import planner
+
+        for raw, key in [
+            ("url", "url"),
+            ("Status", "http_status"),
+            ("country", "country"),
+            ("MITRE", "mitre_technique"),
+            ("tactic", "mitre_tactic"),
+            ("event id", "win_event_id"),
+            ("source ip", "src_ip"),
+        ]:
+            self.assertEqual(planner._clean_field(raw), key, raw)
+
+    def test_requested_breakdowns_survive(self):
+        from tools.dashboard import planner
+
+        raw = [
+            {"kind": "breakdown", "field": f}
+            for f in ("url", "status", "country", "mitre", "event_id")
+        ]
+        panels, dropped = planner.plan_panels(raw, self.SCHEMA, "general", "now-7d", [])
+        titles = [p["title"] for p in panels]
+        self.assertEqual(dropped, [])
+        for t in (
+            "Top URLs",
+            "Top HTTP status codes",
+            "Top source countries",
+            "Top MITRE techniques",
+            "Top Windows event IDs",
+        ):
+            self.assertTrue(any(x.startswith(t) for x in titles), (t, titles))
+
+    def test_keys_whose_field_is_missing_are_still_dropped(self):
+        from tools.dashboard import planner
+
+        panels, dropped = planner.plan_panels(
+            [{"kind": "breakdown", "field": "cve"}], self.SCHEMA, "general", "now-7d", []
+        )
+        self.assertTrue(dropped)
+        self.assertFalse(any("CVE" in p["title"] for p in panels))
+
+    def test_titles_do_not_claim_the_generic_preset(self):
+        from tools.dashboard import planner
+
+        f = [{"term": {"rule.groups": "web"}}]
+        panels, _ = planner.plan_panels(
+            [{"kind": "unique", "field": "src_ip"}], self.SCHEMA, "general", "now-7d", f
+        )
+        titles = [p["title"] for p in panels]
+        self.assertEqual(titles[0], "Matching alerts")
+        self.assertIn("Unique source IPs", titles)
+        self.assertFalse(any("general" in t for t in titles))
+
+    def test_the_engineer_is_pointed_at_the_designing_tool(self):
+        from agent.soc_engineer import SYSTEM_PROMPT
+
+        self.assertIn("design_detection_dashboard", SYSTEM_PROMPT)
+        self.assertIn("`intent`", SYSTEM_PROMPT)
+        self.assertIn("ALREADY exist", SYSTEM_PROMPT)

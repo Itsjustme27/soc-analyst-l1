@@ -1,5 +1,4 @@
-sybsu
-a# SOC L1 Triage Agent
+# SOC L1 Triage Agent
 
 ![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)
 [![Python 3.11-3.13](https://img.shields.io/badge/Python-3.11_|_3.12_|_3.13-blue.svg)](#setup)
@@ -111,6 +110,35 @@ Full reference: `wazuh_docs/cli.md`.
 
 ---
 
+
+### Terminal UI
+
+```bash
+pip install -r requirements-cli.txt   # optional: the full terminal UI
+python scripts_engineer_cli.py
+```
+
+- **Tab completion with descriptions** for every `/command`, and for arguments from live data:
+  skills (`/use`), MCP servers and tools (`/mcp start`, `/mcp allow`), pending/approved proposal
+  ids (`/approve`, `/execute`), SIEM connections (`/siem`, `/test`), platforms (`/connect`),
+  LLM backends (`/model`), agents (`/delegate`).
+- **`@skill` mentions**: `map this alert with @mitre-mapping` activates that skill for one turn.
+- **History** that persists across sessions (Up/Down, Ctrl-R), with grey inline suggestions.
+- **Status bar**: mode, model, MCP servers, pending approvals, token mode.
+- **Keys**: Shift+Tab switches analyst/engineer, Alt+Enter (or Esc then Enter) adds a line,
+  Ctrl-C clears the line, Ctrl-D exits.
+
+Without `prompt_toolkit` the CLI uses readline tab completion (Linux/macOS), and plain input
+when piped or with `--plain`. Completion is generated from `/help`, so the two never drift.
+History lives in `~/.soc_cli_history` (override with `SOC_CLI_HISTORY`).
+
+### Prompt enhancer
+
+Requests are normalized into a validated JSON spec before the agent sees them: code extracts
+the facts (IPs, CVEs, MITRE ids, time ranges, ...), the LLM only classifies the tasks. Anything
+that would create a rule or dashboard shows **"here's what I understood"** first, in the
+dashboard and the CLI. Turn it off with `PROMPT_ENHANCER=false`, `--no-enhance` or
+`/enhance off`. See [docs/prompt_enhancer.md](docs/prompt_enhancer.md).
 
 ### Connect external tools over MCP (optional)
 

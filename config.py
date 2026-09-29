@@ -128,6 +128,14 @@ class Config:
     # record of it.
     WEB_QUERY_LOG_PATH = os.getenv("WEB_QUERY_LOG_PATH", "data/web_queries.jsonl")
 
+    # Prompt enhancer (prompt_enhancer.py): normalize a free-text request into a
+    # validated JSON spec before the agent sees it. Facts (IPs, CVEs, time range,
+    # ...) are extracted by code; the LLM only classifies the tasks, and a
+    # keyword classifier takes over if it can't. Off = raw prompts only.
+    PROMPT_ENHANCER = _bool("PROMPT_ENHANCER", True)
+    # Use the LLM for task classification (else keyword rules only - no extra call).
+    PROMPT_ENHANCER_LLM = _bool("PROMPT_ENHANCER_LLM", True)
+
     # --- Outbound notifications (rules.py action.notify) ---
     # Generic webhook (Slack/Teams-compatible {"text": "..."} payload, or any
     # endpoint that accepts a JSON POST) fired when a rule's action.notify is
@@ -276,11 +284,6 @@ class Config:
     # the downloaded model. See rag/embeddings.py for what the fallback
     # trades away.
     KB_EMBEDDING_MODE = os.getenv("KB_EMBEDDING_MODE", "auto")
-
-    # --- Interactive terminal UI theme ---
-    # Default: 'royal' (royal blue + black).  Other values can be added
-    # later for light/plain variants.  Kept in sync with .env.example.
-    SOC_UI_THEME = os.getenv("SOC_UI_THEME", "royal")
 
 
 cfg = Config()

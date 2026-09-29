@@ -92,6 +92,8 @@ Slash commands:
   /model [backend] [model]         show or switch the LLM for this session
   /cost                            model calls, tokens, and estimated token savings
   /tokens [lean|full]              token-saving mode (lean = trimmed tool set, default)
+  /enhance [on|off]                prompt enhancer: normalize requests into a JSON spec
+                                   (write requests show "what I understood" first)
   /approvals [ask|manual]          ask = review new proposals inline after each turn
   /mcp                             MCP servers + status (config: .mcp.json)
   /mcp tools [server]              list MCP tools (READ vs approval-required)
@@ -315,6 +317,9 @@ class EngineerCLI:
         self.approval_mode = mode_arg if mode_arg in ("ask", "manual") else "ask"
         self.always_actions: set[str] = set()
         self._ask = input
+        from config import cfg as _cfg
+
+        self.enhance_on = bool(getattr(_cfg, "PROMPT_ENHANCER", True)) and getattr(args, "no_enhance", False) is not True
         self.mcp: MCPManager | None = None
 
     def _ensure_engineer(self) -> None:
@@ -441,15 +446,66 @@ class EngineerCLI:
                 compact = compact[:117] + "..."
             print(f"  \u2192 {tc.get('name')} {compact}", flush=True)
 
-    def run_turn(self, message: str):
+    def enhance(self, message: str) -> dict[str, Any] | None:
+        """Prompt-enhancer spec for a request, or None when disabled."""
+        if not self.enhance_on:
+            return None
+        import prompt_enhancer
+        from config import cfg
+
+        llm = None
+        if getattr(cfg, "PROMPT_ENHANCER_LLM", True):
+            try:
+                from llm import get_provider
+
+                llm = get_provider()
+            except Exception:  # noqa: BLE001 - keyword rules take over
+                llm = None
+        return prompt_enhancer.enhance(message, llm)
+
+    def confirm_spec(self, spec: dict[str, Any]) -> str:
+        """Show "here's what I understood" for write/unclear requests.
+        Returns "run", "edit" or "cancel". Non-write, clear requests -> "run"."""
+        import prompt_enhancer
+
+        if self.json_mode or not (spec.get("needs_confirmation") or spec.get("clarifying_question")):
+            return "run"
+        print("\n┌ here's what I understood")
+        for line in prompt_enhancer.summarize(spec):
+            print(f"│ {line}")
+        choice = (self._ask("└ [Enter] run it   [e] edit request   [c] cancel › ") or "").strip().lower()[:1]
+        return {"e": "edit", "c": "cancel"}.get(choice, "run")
+
+    def run_turn(self, message: str, spec: dict[str, Any] | None = None):
+        # The spec is for THIS turn's agent call only. Everything else - skill
+        # suggestion, the saved session, audit, and the history the next turn
+        # sees - uses the user's own words, so old spec blocks never pile up.
+        agent_message = message
+        if spec is not None:
+            import prompt_enhancer
+
+            agent_message = prompt_enhancer.attach(message, spec)
         skills = list(self.skills)
+        mentioned: list[str] = []
+        if "@" in message:
+            from cli.completion import mentioned_skills
+
+            mentioned = [n for n in mentioned_skills(message, {sk.name for sk in discover_skills()})
+                         if n not in skills]
+            skills += mentioned
+            if mentioned and not self.json_mode:
+                print(f"  (skills for this turn: {', '.join(mentioned)})")
         auto: list[str] = []
         if self.auto:
             auto = [name for name in suggest_skills(message, top_k=3) if name not in skills]
             skills += auto
         if self.runner.mode == "engineer":
             self._ensure_engineer()
-        result, self.history = self.runner.run(message, self.history, engineer_skills=skills)
+        result, self.history = self.runner.run(agent_message, self.history, engineer_skills=skills)
+        if agent_message is not message:
+            for turn in self.history:
+                if turn.get("role") == "user" and turn.get("content") == agent_message:
+                    turn["content"] = message
         if auto and not self.json_mode:
             print(f"  (auto-activated skills: {', '.join(auto)})")
         if self.session:
@@ -780,6 +836,11 @@ class EngineerCLI:
                     f"in full mode (\u2248{u.saved_pct}% saved, estimate)"
                 )
             return True
+        if cmd == "/enhance":
+            if rest and rest[0].lower() in ("on", "off"):
+                self.enhance_on = rest[0].lower() == "on"
+            print(f"prompt enhancer: {'on' if self.enhance_on else 'off'}")
+            return True
         if cmd == "/tokens":
             if rest and rest[0].lower() in ("lean", "full"):
                 self.runner.lean = rest[0].lower() == "lean"
@@ -914,12 +975,27 @@ class EngineerCLI:
         print(
             f"  tokens: {'lean' if self.runner.lean else 'full'} \u00b7 approvals: {self.approval_mode}"
         )
-        print("  type /help for commands, /exit to quit")
+        from cli.terminal import make_reader
+
         self.start_mcp(interactive=True)
+        self._reader = make_reader(self, _HELP, plain=getattr(self.args, "plain", False) is True)
+        if self._reader.backend == "prompt_toolkit":
+            print("  Tab completes commands, skills, MCP servers and ids \u00b7 Shift+Tab switches mode")
+        elif self._reader.backend == "readline":
+            print("  Tab completes commands and arguments (pip install -r requirements-cli.txt for the full UI)")
+        print("  type /help for commands, /exit to quit")
+        try:
+            return self._repl_loop()
+        finally:
+            self._reader.close()
+
+    def _repl_loop(self) -> int:
         while True:
             try:
-                raw = input(f"{self.runner.mode} \u203a ")
-            except (EOFError, KeyboardInterrupt):
+                raw = self._reader.read()
+            except KeyboardInterrupt:
+                continue  # Ctrl-C clears the line, like a shell
+            except EOFError:
                 print()
                 return 0
             line = raw.strip()
@@ -929,7 +1005,16 @@ class EngineerCLI:
                 if not self._slash(line):
                     return 0
                 continue
-            result = self.run_turn(line)
+            spec = self.enhance(line)
+            if spec is not None:
+                decision = self.confirm_spec(spec)
+                if decision == "cancel":
+                    print("  cancelled - nothing was run")
+                    continue
+                if decision == "edit":
+                    print(f"  edit and resend: {line}")
+                    continue
+            result = self.run_turn(line, spec)
             self.print_result(result)
             self.review_inline(result)
             pending = self._pending_count()
@@ -980,6 +1065,10 @@ def parse(argv: list[str] | None = None) -> argparse.Namespace:
     )
     ap.add_argument("--mcp-config", help="MCP servers config (default: .mcp.json in the repo)")
     ap.add_argument("--no-mcp", action="store_true", help="don't connect MCP servers")
+    ap.add_argument("--plain", action="store_true",
+                    help="basic line input (no completion menu, status bar or key bindings)")
+    ap.add_argument("--no-enhance", action="store_true",
+                    help="send requests to the agent as typed (no prompt-enhancer spec)")
     ap.add_argument(
         "--mode",
         choices=list(MODES),
@@ -1084,7 +1173,8 @@ def main(argv: list[str] | None = None) -> int:
         finally:
             cli.close()
 
-    result = cli.run_turn(args.message)
+    # one-shot: the spec is attached without a confirmation prompt
+    result = cli.run_turn(args.message, cli.enhance(args.message))
     if args.json:
         cli.emit_json(result)
     else:

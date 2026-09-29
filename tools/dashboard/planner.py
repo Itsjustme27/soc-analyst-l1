@@ -42,17 +42,102 @@ from typing import Any
 # it can never invent a field name; `plan()` drops any key whose real field is
 # missing from the live field_caps schema.
 PLAN_FIELDS: dict[str, str] = {
+    # network
     "src_ip": "data.srcip",
     "dst_ip": "data.dstip",
+    "src_port": "data.srcport",
+    "dst_port": "data.dstport",
+    "protocol": "data.protocol",
+    "country": "GeoLocation.country_name",
+    "city": "GeoLocation.city_name",
+    # identity
     "user": "data.user",
+    "src_user": "data.srcuser",
+    "dst_user": "data.dstuser",
+    # rule / detection
     "rule_id": "rule.id",
     "rule_level": "rule.level",
     "rule_group": "rule.groups",
     "rule_description": "rule.description",
+    "mitre_technique": "rule.mitre.technique",
+    "mitre_tactic": "rule.mitre.tactic",
+    "mitre_id": "rule.mitre.id",
+    # source of the event
     "agent": "agent.name",
+    "agent_ip": "agent.ip",
     "location": "location",
     "decoder": "decoder.name",
     "data_source": "data_source",
+    # web
+    "url": "data.url",
+    "http_status": "data.id",
+    # windows
+    "win_event_id": "data.win.system.eventID",
+    "win_process": "data.win.eventdata.image",
+    "win_target_user": "data.win.eventdata.targetUserName",
+    # file integrity (syscheck)
+    "fim_path": "syscheck.path",
+    "fim_event": "syscheck.event",
+    # vulnerability detector
+    "cve": "data.vulnerability.cve",
+    "vuln_severity": "data.vulnerability.severity",
+    "package": "data.vulnerability.package.name",
+}
+
+# Natural names a model reaches for -> the canonical key. Resolved before the
+# schema check, so "status" or "mitre" works instead of being dropped.
+FIELD_ALIASES: dict[str, str] = {
+    "source_ip": "src_ip",
+    "srcip": "src_ip",
+    "source": "src_ip",
+    "attacker_ip": "src_ip",
+    "destination_ip": "dst_ip",
+    "dstip": "dst_ip",
+    "target_ip": "dst_ip",
+    "source_port": "src_port",
+    "destination_port": "dst_port",
+    "port": "dst_port",
+    "geo": "country",
+    "source_country": "country",
+    "country_name": "country",
+    "username": "user",
+    "account": "user",
+    "target_user": "dst_user",
+    "status": "http_status",
+    "status_code": "http_status",
+    "http_code": "http_status",
+    "uri": "url",
+    "path": "url",
+    "request": "url",
+    "mitre": "mitre_technique",
+    "technique": "mitre_technique",
+    "attack_technique": "mitre_technique",
+    "tactic": "mitre_tactic",
+    "technique_id": "mitre_id",
+    "mitre_technique_id": "mitre_id",
+    "rule": "rule_description",
+    "description": "rule_description",
+    "level": "rule_level",
+    "severity": "rule_level",
+    "group": "rule_group",
+    "groups": "rule_group",
+    "category": "rule_group",
+    "host": "agent",
+    "hostname": "agent",
+    "agent_name": "agent",
+    "endpoint": "agent",
+    "event_id": "win_event_id",
+    "eventid": "win_event_id",
+    "windows_event_id": "win_event_id",
+    "process": "win_process",
+    "image": "win_process",
+    "file": "fim_path",
+    "file_path": "fim_path",
+    "fim": "fim_event",
+    "change_type": "fim_event",
+    "vulnerability": "cve",
+    "cve_id": "cve",
+    "vulnerability_severity": "vuln_severity",
 }
 
 # Operators a filter clause may use. `cidr` exists for the "private to private"
@@ -129,7 +214,8 @@ def _parse_json_object(text: str) -> dict[str, Any] | None:
 def _clean_field(key: Any) -> str | None:
     if not isinstance(key, str):
         return None
-    k = key.strip().lower()
+    k = key.strip().lower().replace("-", "_").replace(" ", "_")
+    k = FIELD_ALIASES.get(k, k)
     return k if k in PLAN_FIELDS else None
 
 
@@ -169,16 +255,12 @@ def plan_filters(raw: Any, schema: dict[str, str]) -> tuple[list[dict[str, Any]]
                 continue
             clauses = [{"range": {PLAN_FIELDS[key]: v}} for v in values]
             # Multiple CIDRs are OR-ed: an alert is in-scope if ANY of them hits.
-            filters.append(
-                {"bool": {"should": clauses, "minimum_should_match": 1}}
-            )
+            filters.append({"bool": {"should": clauses, "minimum_should_match": 1}})
             continue
         if op == "terms":
             filters.append({"terms": {PLAN_FIELDS[key]: values}})
         elif op == "match_phrase":
-            filters.append(
-                {"match_phrase": {PLAN_FIELDS[key]: values[0]}}
-            )
+            filters.append({"match_phrase": {PLAN_FIELDS[key]: values[0]}})
         else:  # term
             filters.append({"term": {PLAN_FIELDS[key]: values[0]}})
     return filters, dropped
@@ -211,7 +293,8 @@ def plan_panels(
     picked: list[dict[str, Any]] = [
         {
             "slug": "alert_count",
-            "title": f"Alert volume - {focus or 'all'}",
+            # Not "- general": this panel is already scoped by the intent filters.
+            "title": "Matching alerts" if filters else "Alert volume",
             "vis_type": "metric",
             "aggs": [_count_agg()],
             "query": q(),
@@ -265,7 +348,7 @@ def plan_panels(
             picked.append(
                 {
                     "slug": slug,
-                    "title": f"Unique {_humanize(key)}",
+                    "title": f"Unique {_noun(key)}",
                     "vis_type": "metric",
                     "aggs": [_count_agg(), _cardinality_agg(field)],
                     "query": q(),
@@ -366,20 +449,51 @@ def _date_hist_agg() -> dict[str, Any]:
     }
 
 
+_NOUNS: dict[str, str] = {
+    "src_ip": "source IPs",
+    "dst_ip": "destination IPs",
+    "src_port": "source ports",
+    "dst_port": "destination ports",
+    "protocol": "protocols / methods",
+    "country": "source countries",
+    "city": "cities",
+    "user": "users",
+    "src_user": "source users",
+    "dst_user": "target users",
+    "rule_id": "rules",
+    "rule_level": "alert levels",
+    "rule_group": "rule groups",
+    "rule_description": "rule descriptions",
+    "mitre_technique": "MITRE techniques",
+    "mitre_tactic": "MITRE tactics",
+    "mitre_id": "MITRE technique IDs",
+    "agent": "agents",
+    "agent_ip": "agent IPs",
+    "location": "log locations",
+    "decoder": "decoders",
+    "data_source": "data sources",
+    "url": "URLs",
+    "http_status": "HTTP status codes",
+    "win_event_id": "Windows event IDs",
+    "win_process": "processes",
+    "win_target_user": "target accounts",
+    "fim_path": "changed files",
+    "fim_event": "file change types",
+    "cve": "CVEs",
+    "vuln_severity": "vulnerability severities",
+    "package": "vulnerable packages",
+}
+
+
+def _noun(key: str) -> str:
+    return _NOUNS.get(key, key.replace("_", " "))
+
+
 def _humanize(key: str) -> str:
-    return {
-        "src_ip": "Top source IPs",
-        "dst_ip": "Top destination IPs",
-        "user": "Top users",
-        "rule_id": "Top rules",
-        "rule_level": "Alert level distribution",
-        "rule_group": "Top rule groups",
-        "rule_description": "Top rule descriptions",
-        "agent": "Top agents",
-        "location": "Top locations",
-        "decoder": "Top decoders",
-        "data_source": "Top data sources",
-    }.get(key, key.replace("_", " ").title())
+    """Breakdown title for a key."""
+    if key == "rule_level":
+        return "Alert level distribution"
+    return "Top " + _noun(key)
 
 
 # --------------------------------------------------------------------------- #
@@ -398,13 +512,11 @@ def plan_dashboard(
     # Only offer the model keys whose real field actually exists on this index,
     # so it is never tempted to plan a panel the schema can't support.
     usable_keys = {k: PLAN_FIELDS[k] for k in sorted(PLAN_FIELDS) if PLAN_FIELDS[k] in schema}
-    schema_hints = ", ".join(
-        f"{k} -> {f} ({schema[f]})" for k, f in usable_keys.items()
-    ) or "none of the known fields are present on this index"
-    user_msg = (
-        f"Field keys available on this index: {schema_hints}\n\n"
-        f"User request: {intent}"
+    schema_hints = (
+        ", ".join(f"{k} -> {f} ({schema[f]})" for k, f in usable_keys.items())
+        or "none of the known fields are present on this index"
     )
+    user_msg = f"Field keys available on this index: {schema_hints}\n\nUser request: {intent}"
     try:
         # .replace(), not .format(): the prompt embeds a literal JSON schema, so
         # str.format would try to interpret every brace in it as a field.
@@ -446,9 +558,7 @@ def plan_dashboard(
             "filters": [],
             "panels": [],
         }
-    panels, panel_dropped = plan_panels(
-        obj.get("panels"), schema, focus, time_range_expr, filters
-    )
+    panels, panel_dropped = plan_panels(obj.get("panels"), schema, focus, time_range_expr, filters)
     title = str(obj.get("title") or "").strip()[:120]
     return {
         "ok": True,
