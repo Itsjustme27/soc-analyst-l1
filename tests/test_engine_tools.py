@@ -1684,6 +1684,58 @@ class TestFrequencyValidation(unittest.TestCase):
         self.assertFalse(v["valid"])
         self.assertTrue(any("Unknown rule element" in e for e in v["errors"]))
 
+    def test_correlation_elements_rejected_as_rule_attributes(self):
+        """Regression: written as ATTRIBUTES the XML still parses and still
+        looks plausible, so it passed validation and then died at upload with
+        a bare '1113: XML syntax error' - burning a fully approved proposal to
+        learn something knowable offline. Live manager: the attribute form is
+        rejected, the child form is accepted."""
+        from tools.wazuh.validation import validate_wazuh_rule_xml
+        v = validate_wazuh_rule_xml(
+            '<rule id="200001" level="10" frequency="5" timeframe="60" '
+            'if_matched_sid="5710,5760" same_source_ip="yes">'
+            '<description>SSH brute force</description></rule>')
+        self.assertFalse(v["valid"])
+        self.assertTrue(any("if_matched_sid" in e and "attribute" in e
+                            for e in v["errors"]))
+        self.assertTrue(any("same_source_ip" in e for e in v["errors"]))
+        # the error must show the working form, not just complain
+        self.assertTrue(any("<if_matched_sid>5710,5760</if_matched_sid>" in e
+                            for e in v["errors"]))
+
+    def test_child_only_tags_rejected_individually_as_attributes(self):
+        from tools.wazuh.validation import validate_wazuh_rule_xml
+        for tag in ("if_matched_sid", "same_source_ip", "same_id",
+                    "not_sid", "not_group", "if_matched_level"):
+            v = validate_wazuh_rule_xml(
+                f'<rule id="200004" level="10" frequency="3" timeframe="60" '
+                f'{tag}="5760"><description>x</description></rule>')
+            self.assertFalse(v["valid"], f"{tag} should be rejected as an attribute")
+            self.assertTrue(any(tag in e for e in v["errors"]), v["errors"])
+
+    def test_valid_child_form_still_passes(self):
+        """The fix must not break the form the manager actually accepts."""
+        from tools.wazuh.validation import validate_wazuh_rule_xml
+        v = validate_wazuh_rule_xml(
+            '<rule id="200001" level="10" frequency="5" timeframe="60">\n'
+            '  <if_matched_sid>5710,5760</if_matched_sid>\n'
+            '  <same_source_ip />\n'
+            '  <description>SSH brute force</description>\n'
+            '</rule>')
+        self.assertTrue(v["valid"], v["errors"])
+
+    def test_valid_rule_attributes_are_not_false_positived(self):
+        """id/level/frequency/timeframe ARE real rule attributes - the new
+        check must only fire on correlation elements."""
+        from tools.wazuh.validation import validate_wazuh_rule_xml
+        v = validate_wazuh_rule_xml(
+            '<rule id="200005" level="10" frequency="5" timeframe="60" '
+            'noalert="1">\n'
+            '  <if_matched_sid>5760</if_matched_sid>\n'
+            '  <description>x</description>\n'
+            '</rule>')
+        self.assertTrue(v["valid"], v["errors"])
+
 
 if __name__ == "__main__":
     unittest.main()

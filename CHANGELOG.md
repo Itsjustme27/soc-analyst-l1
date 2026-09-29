@@ -19,6 +19,12 @@ the tag + `VERSION` + this file's latest section into a GitHub release.
 - `.mcp.json` (auto-starting the test fixture server for every CLI user) is replaced by
   `.mcp.json.example`; `.mcp.json` is git-ignored, and a test guards it.
 - Lint errors in `tests/test_baseline_cli.py` and `tests/test_prompt_profiles.py`.
+- Wazuh correlation elements (`if_matched_sid`, `same_*`, `not_*`) written as `<rule>`
+  **attributes** instead of child elements passed static validation and then died at
+  upload with a bare `1113: XML syntax error` - burning an already-approved proposal
+  to learn something knowable offline. `validate_wazuh_rule_xml` now rejects the
+  attribute form and spells out the working child-element form. The valid rule
+  attributes (`id`/`level`/`frequency`/`timeframe`/`noalert`/...) are unaffected.
 
 ### Added
 

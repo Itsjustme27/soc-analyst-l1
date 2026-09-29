@@ -18,6 +18,17 @@ from typing import Any
 _REQUIRED_RULE_ATTRS = ("id", "level")
 _REQUIRED_DECODER_ATTRS = ("name",)
 
+# Elements Wazuh only accepts as CHILDREN of <rule>. The valid <rule>
+# attributes are id/level/frequency/timeframe/ignore/overwrite/noalert/
+# frequency_check - none of these belong in that set, so seeing one as an
+# attribute is always a mistake and always fatal at upload time.
+_CHILD_ONLY_TAGS = (
+    "if_matched_sid", "if_matched_group", "if_matched_level",
+    "same_source_ip", "same_source_port", "same_dest_ip", "same_field",
+    "same_id", "same_user", "same_location", "same_agent",
+    "not_sid", "not_group", "not_level", "not_regex",
+)
+
 
 from tools.wazuh.xmlio import UnsafeXmlError, safe_fromstring
 
@@ -124,6 +135,23 @@ def validate_wazuh_rule_xml(xml_text: str) -> dict[str, Any]:
                 f'(e.g. <rule id="105000" level="10" {tag}="3" timeframe="60">), '
                 f"not a child element - the manager's ruleset loader rejects "
                 f"child-element <{tag}>."
+            )
+
+    # Correlation elements are CHILD elements in Wazuh - they are not valid
+    # <rule> attributes in any version. Written as attributes
+    # (if_matched_sid="5710,5760" same_source_ip="yes") the XML still parses
+    # and still looks plausible, so it used to pass validation here and then
+    # die at upload with a bare "1113: XML syntax error" - burning a fully
+    # approved proposal to learn something knowable offline. Caught here
+    # instead, with the working form spelled out.
+    for tag in _CHILD_ONLY_TAGS:
+        if tag in root.attrib:
+            errors.append(
+                f'{tag}="{root.attrib[tag]}" is not a valid <rule> attribute - '
+                f"it must be a child element: <{tag}>"
+                f"{' /' if tag.startswith('same_') else ''}"
+                f"{root.attrib[tag]}</{tag}>. The manager rejects the attribute "
+                f"form with 'XML syntax error' (1113)."
             )
 
     # frequency/divide counting rules must reference their parent via
