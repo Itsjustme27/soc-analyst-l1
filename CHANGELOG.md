@@ -11,6 +11,38 @@ the tag + `VERSION` + this file's latest section into a GitHub release.
 
 ### Added
 
+- Second, co-existing system-prompt set selected by `PROMPT_PROFILE`
+  (`agent/prompt_profile.py`). `default` keeps the original compact briefs and is
+  unchanged in behaviour; `detailed` adds the longer, more explicit **SOC L1
+  Analyst** brief (mission, ordered workflow, hard rules, judgment guidelines,
+  output style) and **SOC Engineer** brief (platform responsibilities,
+  non-negotiable safety principles, how-to-work). The analyst brief is split along
+  the seam the code already uses: the unattended half (which calls
+  `submit_verdict`) is on the triage loop, the "Chat mode" half on the chat loop.
+  Both sets are always present in the code — the profile only selects which one is
+  sent, so switching is a one-line env change and not a code revert. An
+  unrecognised value falls back to `default` rather than erroring at import.
+- `tests/test_prompt_profiles.py` (18 tests): profile resolution, guard-notice and
+  `answer_user` retention in both sets, and that the detailed analyst brief names
+  only values the `submit_verdict` schema accepts.
+
+### Changed
+
+- The detailed analyst brief's field-level values were aligned to the
+  `submit_verdict` JSON Schema, which the authored text did not match. As written
+  it would have produced invalid tool calls: `verdict` `benign` and
+  `needs_investigation` are not in the schema enum or in `metrics.VALID_VERDICTS`
+  (`false_positive` / `true_positive` / `escalate`); `recommended_action` is
+  `close_no_action` / `monitor` / `isolate_host` / `disable_account` /
+  `escalate_to_l2`; the field is `evidence_used`, not `evidence_cited`; and
+  `needs_human_review` is computed in code rather than set by the model. The
+  brief's prose, ordering and safety rules are otherwise unchanged.
+- `test_the_engineer_is_pointed_at_the_designing_tool` now skips when the detailed
+  profile is active. The Wazuh tool-level routing it asserts
+  (`design_detection_dashboard` / `` `intent` `` / `ALREADY exist`) is specific to
+  the default engineer brief; the detailed one is a platform-level brief. Under
+  the default profile the assertion still runs unchanged.
+
 - Terminal UI for the CLI (`cli/terminal.py`, `cli/completion.py`, optional
   `requirements-cli.txt`): tab completion with descriptions for commands and live arguments
   (skills, MCP servers/tools, proposal ids, SIEM connections, platforms, LLM backends, agents),

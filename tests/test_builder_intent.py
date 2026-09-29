@@ -846,7 +846,18 @@ class TestPlannerVocabulary(unittest.TestCase):
         self.assertFalse(any("general" in t for t in titles))
 
     def test_the_engineer_is_pointed_at_the_designing_tool(self):
-        from agent.soc_engineer import SYSTEM_PROMPT
+        from agent import prompt_profile
+        from agent.soc_engineer import SYSTEM_PROMPT, SYSTEM_PROMPT_DEFAULT
+
+        # The Wazuh tool-level routing (design_detection_dashboard / `intent` /
+        # "ALREADY exist") is specific to the default engineer brief. The
+        # "detailed" profile is a platform-level brief and deliberately does not
+        # restate it, so this only applies to the prompt actually in use.
+        if SYSTEM_PROMPT is not SYSTEM_PROMPT_DEFAULT:
+            self.skipTest(
+                f"Wazuh tool routing lives in the default brief only "
+                f"(active profile: {prompt_profile.active_profile()})"
+            )
 
         self.assertIn("design_detection_dashboard", SYSTEM_PROMPT)
         self.assertIn("`intent`", SYSTEM_PROMPT)

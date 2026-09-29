@@ -136,6 +136,17 @@ class Config:
     # Use the LLM for task classification (else keyword rules only - no extra call).
     PROMPT_ENHANCER_LLM = _bool("PROMPT_ENHANCER_LLM", True)
 
+    # --- System prompt profile (agent/prompt_profile.py) ---
+    # Two complete system-prompt sets ship side by side; this only selects
+    # which one the agent loops send:
+    #   default  - the original compact briefs. Unchanged behaviour, and the
+    #              set the existing test suite asserts against.
+    #   detailed - longer, more explicit "SOC L1 Analyst" / "SOC Engineer"
+    #              briefs (mission, workflow, hard rules, judgment criteria).
+    # Selecting a profile never mutates or removes the other set. An unknown
+    # value degrades to "default" rather than raising at import time.
+    PROMPT_PROFILE = os.getenv("PROMPT_PROFILE", "default")
+
     # --- Outbound notifications (rules.py action.notify) ---
     # Generic webhook (Slack/Teams-compatible {"text": "..."} payload, or any
     # endpoint that accepts a JSON POST) fired when a rule's action.notify is
