@@ -285,5 +285,10 @@ class Config:
     # trades away.
     KB_EMBEDDING_MODE = os.getenv("KB_EMBEDDING_MODE", "auto")
 
+    # --- Interactive terminal UI theme ---
+    # Default: 'royal' (royal blue + black).  Other values can be added
+    # later for light/plain variants.  Kept in sync with .env.example.
+    SOC_UI_THEME = os.getenv("SOC_UI_THEME", "royal")
+
 
 cfg = Config()

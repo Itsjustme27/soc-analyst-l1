@@ -10,7 +10,7 @@ from __future__ import annotations
 
 from typing import Any
 
-from cli.ui.theme import ROYAL, ROYAL_LIGHT, ROYAL_DIM, GREY, _no_color
+from cli.ui.theme import ROYAL_LIGHT, _no_color
 
 
 def build_status_line(state: dict[str, Any]) -> str:

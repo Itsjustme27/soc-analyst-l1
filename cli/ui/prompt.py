@@ -14,8 +14,8 @@ Provides a bordered input box with:
 from __future__ import annotations
 
 import os
+from collections.abc import Callable, Iterable
 from pathlib import Path
-from typing import Callable, Iterable
 
 from prompt_toolkit import PromptSession
 from prompt_toolkit.completion import (
@@ -23,12 +23,10 @@ from prompt_toolkit.completion import (
     FuzzyCompleter,
     WordCompleter,
 )
-from prompt_toolkit.document import Document
 from prompt_toolkit.history import FileHistory
 from prompt_toolkit.key_binding import KeyBindings
-from prompt_toolkit.styles import Style
 
-from cli.ui.theme import PT_STYLE, _no_color
+from cli.ui.theme import PT_STYLE
 
 # --------------------------------------------------------------------------- #
 # History
