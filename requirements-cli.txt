@@ -2,3 +2,7 @@
 # descriptions, persistent history + inline suggestions, status bar, Shift+Tab mode switch.
 # Without it the CLI falls back to readline tab completion (Linux/macOS) or plain input.
 prompt_toolkit>=3.0.36
+# rich is required too: cli/ui/theme.py builds RICH_THEME from rich.theme at
+# module level. It is NOT a transitive dependency of prompt_toolkit (which
+# only needs wcwidth), so it has to be listed explicitly.
+rich>=13.0

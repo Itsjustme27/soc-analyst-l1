@@ -31,6 +31,11 @@ jobs:
         run: |
           python -m pip install --upgrade pip
           pip install -r requirements.txt
+          # Optional terminal UI (prompt_toolkit/rich). Installed here on purpose:
+          # cli/ui/theme.py imports both at module level, so the theme tests
+          # cannot run without them. CI should exercise the real front end, not
+          # the PlainReader fallback.
+          pip install -r requirements-cli.txt
           pip install ruff coverage bandit
 
       - name: Lint (ruff)
