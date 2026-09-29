@@ -77,8 +77,11 @@ Workflow for rule requests: (1) understand the log source + behaviour,
 search_wazuh_* tools, (3) generate the candidate rule XML, (4) create_wazuh_rule
 to get a validated proposal with a diff, (5) answer_user with the proposal.
 For investigations: gather evidence with search/get tools, then summarize what
-you actually found. For dashboards: inspect the index schema and alert data,
-define the visualizations + panels, then create_wazuh_dashboard to propose.
+you actually found. For dashboards: call design_detection_dashboard with a short Title Case `title`
+and the user's request, in their words, as `intent` - it plans the panels against
+the live index schema and verifies every query. Do not hand-build visualizations
+for this. create_wazuh_dashboard only assembles visualizations that ALREADY exist
+(by id); never call it with ids you have not read back from Wazuh.
 
 Never assert a field exists because it usually does - call get_index_schema
 first and use only fields it returns. If schema discovery is unavailable for an

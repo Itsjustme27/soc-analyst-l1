@@ -11,6 +11,45 @@ the tag + `VERSION` + this file's latest section into a GitHub release.
 
 ### Added
 
+- Terminal UI for the CLI (`cli/terminal.py`, `cli/completion.py`, optional
+  `requirements-cli.txt`): tab completion with descriptions for commands and live arguments
+  (skills, MCP servers/tools, proposal ids, SIEM connections, platforms, LLM backends, agents),
+  `@skill` mentions for one turn, persistent history with suggestions, a status bar, Shift+Tab
+  mode switch and Alt+Enter newlines. Falls back to readline or plain input; `--plain` forces it.
+
+- Prompt enhancer (`prompt_enhancer.py`, `POST /api/enhance`): free-text requests become a
+  validated JSON spec (tasks, entities, time range, assumptions) before the agent sees them.
+  Facts are extracted by code, the LLM only classifies tasks, and a keyword classifier takes
+  over when it can't. Write requests show "here's what I understood" first (dashboard AI
+  engineer and CLI). Settings: `PROMPT_ENHANCER`, `PROMPT_ENHANCER_LLM`; CLI `--no-enhance`,
+  `/enhance on|off`. See `docs/prompt_enhancer.md`.
+
+### Fixed
+
+- `.mcp.json` was committed again, auto-starting the test fixture server (whose tool returns an
+  injection payload) for every CLI user, while the README's `cp .mcp.json.example .mcp.json`
+  step failed because the example file didn't exist. It ships as `.mcp.json.example` and
+  `.mcp.json` is git-ignored.
+
+- Dashboard requests no longer come back as the generic default dashboard. The engineer was
+  told to hand-build dashboards with `create_wazuh_dashboard` (which only assembles existing
+  visualizations), agents that omitted `intent` got the fixed template, and a planner failure
+  silently substituted it. Now: the engineer uses `design_detection_dashboard` with the request
+  as `intent`; a missing `intent` is taken from a descriptive `reason`; a planner failure is a
+  clear error and nothing is proposed.
+- The dashboard planner can express far more requests: URLs, HTTP status, source countries,
+  ports, MITRE technique/tactic/ID, Windows event IDs/processes, file-integrity paths,
+  source/target users and vulnerabilities (each still offered only if the field exists in the
+  index), with aliases such as "status" and "mitre". Panel titles no longer read
+  "Alert volume - general" or "Unique Top source IPs".
+- Rule builder reports an unreachable manager instead of a false "rule id already exists";
+  an unconfigured indexer names `WAZUH_HOST` instead of a raw `requests` URL error.
+- Watchlist: adding an entry right after creating a table works (the name is no longer cleared).
+- Clean clones/CI: the `*.log` ignore rule no longer hides the logtest fixture;
+  `.env.example` documents `PREVIEW_DIR` and `WEB_QUERY_LOG_PATH`.
+
+### Added
+
 - **Intent-driven builders.** Both builder UIs were template machines.
   `design_detection_dashboard` took `focus` as a closed enum
   (`web|ssh|network|general`) and ignored free text, so "ssh failed login from

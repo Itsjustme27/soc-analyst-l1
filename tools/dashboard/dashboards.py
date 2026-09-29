@@ -171,8 +171,10 @@ class UpdateWazuhDashboard(BaseWazuhTool):
 class CreateWazuhDashboard(BaseWazuhTool):
     name = "create_wazuh_dashboard"
     description = (
-        "Create a saved dashboard on the Wazuh dashboard from panels referencing "
-        "visualization ids. WRITE - proposes and requires human approval."
+        "Assemble a saved dashboard from visualizations that ALREADY exist on the Wazuh "
+        "dashboard, by their ids. It does not design panels - to build a new dashboard from "
+        "a request use design_detection_dashboard with `intent`. WRITE - proposes and "
+        "requires human approval."
     )
     input_schema = {
         "type": "object",

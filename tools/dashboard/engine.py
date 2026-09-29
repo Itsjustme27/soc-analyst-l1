@@ -339,8 +339,9 @@ class DesignDetectionDashboard(BaseWazuhTool):
     description = (
         "Dashboard engineering workflow: turn a request into a Wazuh-dashboard proposal "
         "whose panels actually match the data, verifying every panel query against the real "
-        "indexer. Pass `intent` as free text (e.g. 'ssh failed logins from private IPs to "
-        "private IPs') to get a plan specific to that request; omit it to fall back to the "
+        "indexer. THIS is the tool for building a new dashboard from a request. ALWAYS pass "
+        "the user's request, in their words, as `intent` (e.g. 'web attacks by URL and HTTP "
+        "status, top source countries'). Only a call with neither intent nor reason uses the "
         "fixed `focus` template (web | ssh | network | general). WRITE on execute: creates "
         "the visualizations + dashboard on the Wazuh dashboard server (best-effort; requires "
         "human approval)."
@@ -357,8 +358,9 @@ class DesignDetectionDashboard(BaseWazuhTool):
                 "description": (
                     "free-text description of what the dashboard should show, e.g. "
                     "'ssh failed login from private to private ip'. Planned against the "
-                    "live index schema, then every panel query is verified. Optional; "
-                    "without it the `focus` template is used."
+                    "live index schema, then every panel query is verified. Pass the "
+                    "user's request here - without intent (or reason) you get the generic "
+                    "`focus` template, not the dashboard they asked for."
                 ),
             },
             "focus": {
@@ -404,6 +406,21 @@ class DesignDetectionDashboard(BaseWazuhTool):
         # Falls back to the fixed template whenever the planner is unavailable
         # or returns something unusable, so this can only add specificity.
         intent = str(p.get("intent") or "").strip()
+        intent_source = "intent"
+        # Agents routinely omit the optional `intent` and put the user's words
+        # in `reason` - which used to hand them the fixed template, i.e. "the
+        # dashboard is always the same default". Plan from the reason instead.
+        # The dashboard UI's own preset path sends a generated reason
+        # ("Dashboard builder (<focus>)") and still gets the preset.
+        reason = str(p.get("reason") or "").strip()
+        # A reason too short to describe a dashboard ("r", "needed") isn't a request.
+        if (
+            not intent
+            and reason
+            and not reason.startswith("Dashboard builder (")
+            and len(reason.split()) >= 3
+        ):
+            intent, intent_source = reason, "reason"
         plan_info: dict[str, Any] = {}
         panels: list[dict[str, Any]] | None = None
         if intent:
@@ -423,11 +440,18 @@ class DesignDetectionDashboard(BaseWazuhTool):
                     "planner_dropped": planned.get("dropped", []),
                 }
             else:
-                plan_info = {
-                    "planned_from_intent": intent,
-                    "planner_fallback": planned.get("error", "planner unusable"),
-                    "planner_dropped": planned.get("dropped", []),
-                }
+                # Fail loudly. Silently swapping in the fixed template produced
+                # a dashboard that ignored the request while looking like a
+                # success - the exact complaint this path exists to prevent.
+                dropped = "; ".join(planned.get("dropped") or [])
+                raise ToolError(
+                    f"Couldn't plan a dashboard for {intent!r}: "
+                    f"{planned.get('error', 'the planner returned nothing usable')}"
+                    + (f" ({dropped})" if dropped else "")
+                    + ". Nothing was proposed. Rephrase the request, check that the LLM is "
+                    "configured, or call again with `focus` and no intent/reason to use a preset."
+                )
+            plan_info["intent_source"] = intent_source
         if panels is None:
             panels = _panel_plan(focus, schema)
 

@@ -1,0 +1,4 @@
+# Optional: the full terminal UI for scripts_engineer_cli.py - completion menu with
+# descriptions, persistent history + inline suggestions, status bar, Shift+Tab mode switch.
+# Without it the CLI falls back to readline tab completion (Linux/macOS) or plain input.
+prompt_toolkit>=3.0.36

@@ -405,6 +405,11 @@
   .chat-msg .sev.medium { color: var(--amber); background: var(--amber-soft); }
   .chat-msg .sev.low, .chat-msg .sev.info { color: var(--muted); background: rgba(255,255,255,.04); }
 
+  .understood { border-left-color: var(--beacon) !important; }
+  .understood .who { color: var(--beacon) !important; }
+  .understood-list { margin: 4px 0 0; padding-left: 0; list-style: none; white-space: normal; }
+  .understood-list li { margin: 3px 0; color: var(--frost); }
+
   ::selection { background: rgba(var(--beacon-rgb),.3); }
   * { scrollbar-width: thin; scrollbar-color: rgba(160,190,215,.2) transparent; }
   ::-webkit-scrollbar { width: 10px; height: 10px; }
@@ -2330,18 +2335,62 @@ function renderEngineerProposals(proposals) {
   for (const p of proposals) box.appendChild(proposalCard(p));
 }
 
+/* Prompt enhancer: the request is normalized into a validated spec first
+   (POST /api/enhance - read-only). Anything that WRITES (a rule, a dashboard) or
+   that the enhancer wants to clarify is shown as "here's what I understood"
+   before the engineer does any work; everything else goes straight through
+   with the spec attached. If the enhancer is off or unreachable, the raw
+   request is sent exactly as before. */
 async function sendEngineer() {
   const input = $("engineer-input");
   const msg = input.value.trim();
   if (!msg) return;
   input.value = "";
+  let spec = null;
+  try {
+    const r = await api("/api/enhance", { method: "POST", body: JSON.stringify({ message: msg }) });
+    if (r && r.enabled) {
+      spec = r.spec;
+      if (spec.needs_confirmation || spec.clarifying_question) {
+        showUnderstood(msg, spec, r.summary || []);
+        return;
+      }
+    }
+  } catch (_) { /* enhancer is best-effort */ }
+  runEngineer(msg, spec);
+}
+
+function showUnderstood(msg, spec, summary) {
   engineerMsg("user", esc(msg));
+  const wrap = $("engineer-wrap");
+  const card = document.createElement("div");
+  card.className = "chat-msg agent understood";
+  card.innerHTML =
+    '<div class="who">Here\'s what I understood</div>' +
+    '<ul class="understood-list">' + summary.map(l => "<li>" + esc(l) + "</li>").join("") + "</ul>" +
+    '<div class="actions" style="margin-top:10px;">' +
+    '<button class="btn primary" data-act="run">Run it</button>' +
+    '<button class="btn" data-act="edit">Edit request</button></div>';
+  card.querySelector('[data-act="run"]').onclick = () => { card.remove(); runEngineer(msg, spec, true); };
+  card.querySelector('[data-act="edit"]').onclick = () => {
+    card.remove();
+    const last = wrap.lastElementChild;
+    if (last && last.classList.contains("user")) last.remove();
+    $("engineer-input").value = msg;
+    $("engineer-input").focus();
+  };
+  wrap.appendChild(card);
+  wrap.scrollTop = wrap.scrollHeight;
+}
+
+async function runEngineer(msg, spec, alreadyShown) {
+  if (!alreadyShown) engineerMsg("user", esc(msg));
   const boot = document.createElement("div");
   boot.className = "chat-msg agent";
   boot.innerHTML = '<div class="who">engineer</div><div class="skeleton row" style="max-width:380px;"></div>';
   $("engineer-wrap").appendChild(boot);
   try {
-    const res = await api("/api/engineer/chat", { method: "POST", body: JSON.stringify({ message: msg, history: ENGINEER_HISTORY }) });
+    const res = await api("/api/engineer/chat", { method: "POST", body: JSON.stringify({ message: msg, history: ENGINEER_HISTORY, spec }) });
     ENGINEER_HISTORY.push({ role: "user", content: msg });
     ENGINEER_HISTORY.push({ role: "assistant", content: res.reply });
     boot.remove();
